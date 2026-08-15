@@ -1,11 +1,16 @@
 defmodule Muta.Coverage.Cache do
   alias Muta.Coverage
 
-  @spec fetch(Path.t(), binary()) :: {:ok, Coverage.t()} | :stale
+  @enforce_keys [:coverage, :files_by_module]
+  defstruct [:coverage, :files_by_module]
+
+  @type t :: %__MODULE__{coverage: Coverage.t(), files_by_module: %{module() => Path.t()}}
+
+  @spec fetch(Path.t(), binary()) :: {:ok, t()} | :stale
   def fetch(path, fingerprint) do
     with {:ok, binary} <- File.read(path),
-         {^fingerprint, coverage} <- :erlang.binary_to_term(binary) do
-      {:ok, coverage}
+         {^fingerprint, %__MODULE__{} = cache} <- :erlang.binary_to_term(binary) do
+      {:ok, cache}
     else
       _anything_else -> :stale
     end
@@ -13,10 +18,10 @@ defmodule Muta.Coverage.Cache do
     ArgumentError -> :stale
   end
 
-  @spec store(Path.t(), binary(), Coverage.t()) :: :ok
-  def store(path, fingerprint, coverage) do
+  @spec store(Path.t(), binary(), t()) :: :ok
+  def store(path, fingerprint, %__MODULE__{} = cache) do
     File.mkdir_p!(Path.dirname(path))
-    File.write!(path, :erlang.term_to_binary({fingerprint, coverage}))
+    File.write!(path, :erlang.term_to_binary({fingerprint, cache}))
   end
 
   @spec fingerprint([Path.t()], [module()]) :: binary()
