@@ -15,7 +15,7 @@ defmodule Muta do
     for source <- config.sources,
         module <- source.modules,
         signature <- Source.signatures(source),
-        not Map.has_key?(coverage, {module, signature}),
+        not Coverage.knows?(coverage, module, signature),
         uniq: true,
         do: {module, signature}
   end

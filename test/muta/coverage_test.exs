@@ -28,7 +28,7 @@ defmodule Muta.CoverageTest do
 
     coverage = Coverage.build([Bands], [banding])
 
-    covered = for {{Bands, signature}, _ids} <- coverage, do: signature
+    covered = for {{Bands, signature}, _ids} <- coverage.by_function, do: signature
 
     assert {:band, 1} in covered
     refute {:surcharge, 1} in covered
@@ -93,12 +93,9 @@ defmodule Muta.CoverageTest do
     coverage = Coverage.build([Bands], [suite])
 
     learned =
-      Coverage.note_unreached(coverage, [Bands], [suite], [
-        {Bands, {:surcharge, 1}},
-        {Bands, {:band, 1}}
-      ])
+      Coverage.settle(coverage, [{Bands, {:surcharge, 1}}, {Bands, {:band, 1}}], [suite])
 
-    assert Map.fetch(learned, {Bands, {:surcharge, 1}}) == {:ok, []}
+    assert Coverage.knows?(learned, Bands, {:surcharge, 1})
     assert Coverage.tests_covering(learned, [Bands], {:surcharge, 1}) == []
 
     assert Coverage.tests_covering(learned, [Bands], {:band, 1}) == [
@@ -118,9 +115,9 @@ defmodule Muta.CoverageTest do
       end
       """)
 
-    learned = Coverage.note_unreached(%{}, [Bands], [suite], [{Bands, {:surcharge, 1}}])
+    learned = Coverage.settle(Coverage.empty(), [{Bands, {:surcharge, 1}}], [suite])
 
-    refute Map.has_key?(learned, {Bands, {:surcharge, 1}})
+    refute Coverage.knows?(learned, Bands, {:surcharge, 1})
   end
 
   test "leaves the target module callable afterwards" do

@@ -36,8 +36,7 @@ defmodule Mix.Tasks.Mutate do
     loader = fn module -> load_test_module(module, files_by_module) end
     config = Config.new(files, test_modules, load_test_module: loader)
 
-    coverage =
-      learn_unknown(coverage, config, target_modules, test_modules, fingerprint, files_by_module)
+    coverage = learn_unknown(coverage, config, test_modules, fingerprint, files_by_module)
 
     Muta.run(config, coverage)
   end
@@ -57,14 +56,14 @@ defmodule Mix.Tasks.Mutate do
   # it". Running the reaching tests once settles the question instead: whatever
   # they never call has no test to kill its mutants, which is the answer that
   # matters most for code you just wrote.
-  defp learn_unknown(coverage, config, target_modules, test_modules, fingerprint, files) do
+  defp learn_unknown(coverage, config, test_modules, fingerprint, files) do
     case Muta.unknown_functions(config, coverage) do
       [] ->
         coverage
 
       unknown ->
         Enum.each(test_modules, &config.load_test_module.(&1))
-        learned = Coverage.note_unreached(coverage, target_modules, test_modules, unknown)
+        learned = Coverage.settle(coverage, unknown, test_modules)
         Cache.store(@cache_path, fingerprint, {learned, files})
 
         learned
