@@ -16,6 +16,7 @@ defmodule Muta.Engine do
 
     try do
       originals = compile(source, file)
+      verify_baseline(test_modules, timeout_ms)
 
       source
       |> Generator.generate(file, mutators)
@@ -28,6 +29,48 @@ defmodule Muta.Engine do
   end
 
   defp compile(source, file), do: Code.compile_string(source, file)
+
+  # Every mutant is judged by re-running the same tests, which only means
+  # anything if those tests give the same answer twice on unmutated code. A
+  # suite that leaks state between runs would mark mutants killed for reasons
+  # that have nothing to do with the mutation, so refuse rather than report a
+  # score built on it.
+  defp verify_baseline(test_modules, timeout_ms) do
+    first = baseline(test_modules, timeout_ms)
+    second = baseline(test_modules, timeout_ms)
+
+    ensure_green(first)
+    ensure_green(second)
+    ensure_repeatable(first, second)
+  end
+
+  defp baseline(test_modules, timeout_ms) do
+    task = Task.async(fn -> ExUnit.run(test_modules) end)
+
+    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, results} ->
+        results
+
+      nil ->
+        raise Muta.UntrustworthyError,
+              "the tests did not finish within #{timeout_ms}ms on unmutated code"
+    end
+  end
+
+  defp ensure_green(%{failures: 0}), do: :ok
+
+  defp ensure_green(%{failures: failures}) do
+    raise Muta.UntrustworthyError,
+          "#{failures} test(s) fail on unmutated code, so no mutant can be judged"
+  end
+
+  defp ensure_repeatable(results, results), do: :ok
+
+  defp ensure_repeatable(first, second) do
+    raise Muta.UntrustworthyError,
+          "the tests gave different results on two runs of unmutated code " <>
+            "(#{inspect(first)} then #{inspect(second)}), so they leak state between runs"
+  end
 
   defp evaluate(%Mutation{} = mutation, originals, file, test_modules, timeout_ms) do
     {duration_us, outcome} =
