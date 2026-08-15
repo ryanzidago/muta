@@ -16,7 +16,7 @@ defmodule Muta do
 
     report =
       Engine.run(source, target.file, target.test_modules, config.mutators,
-        timeout_ms: config.timeout_ms
+        baseline_timeout_ms: config.baseline_timeout_ms
       )
 
     report.mutants

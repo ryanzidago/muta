@@ -5,11 +5,15 @@ defmodule Muta.Engine do
   alias Muta.Report
   alias Muta.UntrustworthyError
 
-  @default_timeout_ms 5_000
+  @default_baseline_timeout_ms 30_000
+  @patience 10
+  @min_timeout_ms 200
 
   @spec run(String.t(), Path.t(), [module()], [module()], keyword()) :: Report.t()
   def run(source, file, test_modules, mutators, opts \\ []) do
-    timeout_ms = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
+    baseline_timeout_ms =
+      Keyword.get(opts, :baseline_timeout_ms, @default_baseline_timeout_ms)
+
     conflicts_allowed = Code.get_compiler_option(:ignore_module_conflict)
     formatters = ExUnit.configuration()[:formatters]
     only_test_ids = ExUnit.configuration()[:only_test_ids]
@@ -18,7 +22,8 @@ defmodule Muta.Engine do
 
     try do
       originals = Code.compile_string(source, file)
-      ensure_baseline_is_trustworthy(test_modules, timeout_ms)
+      baseline_ms = ensure_baseline_is_trustworthy(test_modules, baseline_timeout_ms)
+      timeout_ms = max(baseline_ms * @patience, @min_timeout_ms)
 
       source
       |> Generator.generate(file, mutators)
@@ -38,11 +43,13 @@ defmodule Muta.Engine do
 
   defp ensure_baseline_is_trustworthy(test_modules, timeout_ms) do
     first = baseline(test_modules, timeout_ms)
-    second = baseline(test_modules, timeout_ms)
+    {duration_us, second} = :timer.tc(fn -> baseline(test_modules, timeout_ms) end)
 
     ensure_green(first)
     ensure_green(second)
     ensure_repeatable(first, second)
+
+    div(duration_us, 1000)
   end
 
   defp baseline(test_modules, timeout_ms) do

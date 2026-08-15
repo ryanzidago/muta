@@ -97,7 +97,7 @@ defmodule Muta.EngineTest do
 
     {report, _log} =
       with_log(fn ->
-        Engine.run(source, "fixture.ex", [test_module], [Comparison], timeout_ms: 500)
+        Engine.run(source, "fixture.ex", [test_module], [Comparison])
       end)
 
     assert %{outcome: :timed_out} = mutant(report, "cents <= 0")
