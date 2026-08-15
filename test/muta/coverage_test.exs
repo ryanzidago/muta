@@ -78,6 +78,51 @@ defmodule Muta.CoverageTest do
     assert Coverage.tests_covering(coverage, [Bands], {:band, 1}) == []
   end
 
+  test "settles a function the map has never seen by asking whether anything calls it" do
+    suite =
+      compile_suite(~S"""
+      defmodule LearnsUnreachedTest do
+        use ExUnit.Case, async: false
+
+        test "touches only banding" do
+          assert Muta.Support.Bands.band(50) == :low
+        end
+      end
+      """)
+
+    coverage = Coverage.build([Bands], [suite])
+
+    learned =
+      Coverage.note_unreached(coverage, [Bands], [suite], [
+        {Bands, {:surcharge, 1}},
+        {Bands, {:band, 1}}
+      ])
+
+    assert Map.fetch(learned, {Bands, {:surcharge, 1}}) == {:ok, []}
+    assert Coverage.tests_covering(learned, [Bands], {:surcharge, 1}) == []
+
+    assert Coverage.tests_covering(learned, [Bands], {:band, 1}) == [
+             {LearnsUnreachedTest, :"test touches only banding"}
+           ]
+  end
+
+  test "does not silence a function the tests do reach" do
+    suite =
+      compile_suite(~S"""
+      defmodule LearnsReachedTest do
+        use ExUnit.Case, async: false
+
+        test "touches surcharge" do
+          assert Muta.Support.Bands.surcharge(900) == :levied
+        end
+      end
+      """)
+
+    learned = Coverage.note_unreached(%{}, [Bands], [suite], [{Bands, {:surcharge, 1}}])
+
+    refute Map.has_key?(learned, {Bands, {:surcharge, 1}})
+  end
+
   test "leaves the target module callable afterwards" do
     suite =
       compile_suite(~S"""
