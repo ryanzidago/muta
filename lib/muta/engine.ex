@@ -4,6 +4,7 @@ defmodule Muta.Engine do
   alias Muta.Generator
   alias Muta.Mutant
   alias Muta.Mutation
+  alias Muta.Settings
   alias Muta.Source
   alias Muta.Timing
   alias Muta.UntrustworthyError
@@ -13,26 +14,12 @@ defmodule Muta.Engine do
 
   @spec run(Source.t(), Coverage.t(), Config.t()) :: [Mutant.t()]
   def run(%Source{} = source, coverage, %Config{} = config) do
-    conflicts_allowed = Code.get_compiler_option(:ignore_module_conflict)
-    formatters = ExUnit.configuration()[:formatters]
-    only_test_ids = ExUnit.configuration()[:only_test_ids]
-    max_failures = ExUnit.configuration()[:max_failures]
-    test_timeout = ExUnit.configuration()[:timeout]
-    Code.put_compiler_option(:ignore_module_conflict, true)
-    ExUnit.configure(formatters: [], max_failures: 1)
+    Settings.restored_after(fn ->
+      Code.put_compiler_option(:ignore_module_conflict, true)
+      ExUnit.configure(formatters: [], max_failures: 1)
 
-    try do
       mutate(source, coverage, config)
-    after
-      Code.put_compiler_option(:ignore_module_conflict, conflicts_allowed)
-
-      ExUnit.configure(
-        formatters: formatters,
-        only_test_ids: only_test_ids,
-        max_failures: max_failures,
-        timeout: test_timeout
-      )
-    end
+    end)
   end
 
   defp mutate(%Source{} = source, coverage, %Config{} = config) do

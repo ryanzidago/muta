@@ -1,4 +1,5 @@
 defmodule Muta.Coverage do
+  alias Muta.Settings
   alias Muta.Source
 
   @enforce_keys [:by_function, :by_module]
@@ -16,19 +17,15 @@ defmodule Muta.Coverage do
 
   @spec build([module()], [module()]) :: t()
   def build(target_modules, test_modules) do
-    only_test_ids = ExUnit.configuration()[:only_test_ids]
-    formatters = ExUnit.configuration()[:formatters]
-    ExUnit.configure(formatters: [])
+    Settings.restored_after(fn ->
+      ExUnit.configure(formatters: [])
 
-    try do
       instrumented(target_modules, fn ->
         test_modules
         |> Enum.flat_map(&test_ids_in/1)
         |> Enum.reduce(empty(), &record_hits(&1, &2, target_modules))
       end)
-    after
-      ExUnit.configure(formatters: formatters, only_test_ids: only_test_ids)
-    end
+    end)
   end
 
   @spec tests_covering(t(), [module()], Source.signature()) :: [test_id()]
@@ -86,21 +83,21 @@ defmodule Muta.Coverage do
   end
 
   defp touched_signatures(target_modules, test_modules) do
-    only_test_ids = ExUnit.configuration()[:only_test_ids]
-    formatters = ExUnit.configuration()[:formatters]
-    ExUnit.configure(formatters: [], only_test_ids: nil)
+    Settings.restored_after(fn ->
+      ExUnit.configure(formatters: [], only_test_ids: nil)
 
-    try do
       instrumented(target_modules, fn ->
         :cover.reset()
         ExUnit.run(test_modules)
 
-        for target <- target_modules, signature <- functions_called(target), into: MapSet.new() do
-          {target, signature}
-        end
+        signatures_called(target_modules)
       end)
-    after
-      ExUnit.configure(formatters: formatters, only_test_ids: only_test_ids)
+    end)
+  end
+
+  defp signatures_called(target_modules) do
+    for target <- target_modules, signature <- functions_called(target), into: MapSet.new() do
+      {target, signature}
     end
   end
 
