@@ -95,9 +95,14 @@ defmodule Muta.Engine do
   end
 
   defp ensure_baseline_is_trustworthy(test_ids, timeout_ms) do
-    ExUnit.configure(only_test_ids: MapSet.new(test_ids), formatters: [Timing.Formatter])
+    {:ok, timing} = Timing.start_link()
     modules = modules_of(test_ids)
-    {:ok, _agent} = Timing.start_link()
+
+    ExUnit.configure(
+      only_test_ids: MapSet.new(test_ids),
+      formatters: [Timing.Formatter],
+      muta_timing: timing
+    )
 
     try do
       first = baseline(modules, timeout_ms)
@@ -107,9 +112,9 @@ defmodule Muta.Engine do
       ensure_green(second)
       ensure_repeatable(first, second)
 
-      Timing.slowest_ms()
+      Timing.slowest_ms(timing)
     after
-      Timing.stop()
+      Timing.stop(timing)
       ExUnit.configure(formatters: [])
     end
   end

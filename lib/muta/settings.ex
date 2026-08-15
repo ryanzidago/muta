@@ -1,5 +1,5 @@
 defmodule Muta.Settings do
-  @borrowed [:formatters, :max_failures, :only_test_ids, :timeout]
+  @borrowed [:formatters, :max_failures, :muta_timing, :only_test_ids, :timeout]
 
   @spec restored_after((-> result)) :: result when result: var
   def restored_after(work) do

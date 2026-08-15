@@ -1,11 +1,13 @@
 defmodule Muta.Timing do
-  use Agent
+  @spec start_link() :: {:ok, pid()}
+  def start_link, do: Agent.start_link(fn -> 0 end)
 
-  def start_link, do: Agent.start_link(fn -> 0 end, name: __MODULE__)
+  @spec record(pid(), non_neg_integer()) :: :ok
+  def record(timing, microseconds), do: Agent.update(timing, &max(&1, microseconds))
 
-  def record(microseconds), do: Agent.update(__MODULE__, &max(&1, microseconds))
+  @spec slowest_ms(pid()) :: non_neg_integer()
+  def slowest_ms(timing), do: div(Agent.get(timing, & &1), 1000)
 
-  def slowest_ms, do: div(Agent.get(__MODULE__, & &1), 1000)
-
-  def stop, do: Agent.stop(__MODULE__)
+  @spec stop(pid()) :: :ok
+  def stop(timing), do: Agent.stop(timing)
 end
