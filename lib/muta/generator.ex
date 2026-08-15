@@ -1,13 +1,12 @@
 defmodule Muta.Generator do
   alias Muta.Mutation
+  alias Muta.Source
 
-  @spec generate(String.t(), Path.t(), [module()]) :: [Mutation.t()]
-  def generate(source, file, mutators) do
-    ast = Code.string_to_quoted!(source, file: file)
-
-    ast
+  @spec generate(Source.t(), [module()]) :: [Mutation.t()]
+  def generate(%Source{} = source, mutators) do
+    source.ast
     |> candidates(mutators)
-    |> Enum.map(&build(&1, ast, file))
+    |> Enum.map(&build(&1, source))
   end
 
   defp candidates(ast, mutators) do
@@ -24,14 +23,14 @@ defmodule Muta.Generator do
     Enum.reverse(found)
   end
 
-  defp build({index, mutator, node, replacement}, ast, file) do
+  defp build({index, mutator, node, replacement}, %Source{} = source) do
     %Mutation{
-      file: file,
+      file: source.file,
       line: line_of(node),
       mutator: mutator,
       original: Macro.to_string(node),
       mutated: Macro.to_string(replacement),
-      ast: replace_at(ast, index, replacement)
+      ast: replace_at(source.ast, index, replacement)
     }
   end
 

@@ -1,6 +1,5 @@
 defmodule Muta.Support.Fixture do
   alias Muta.Config
-  alias Muta.Target
 
   def config(dir, name, source, suite, opts \\ []) do
     Config.new([target(dir, name, source)], [suite_module(suite)], opts)
@@ -21,7 +20,7 @@ defmodule Muta.Support.Fixture do
       {:module, ^module} = :code.load_file(module)
     end)
 
-    %Target{file: file}
+    file
   end
 
   def suite_module(suite) do

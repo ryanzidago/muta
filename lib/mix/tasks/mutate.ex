@@ -5,7 +5,6 @@ defmodule Mix.Tasks.Mutate do
   alias Muta.Coverage
   alias Muta.Coverage.Cache
   alias Muta.Report
-  alias Muta.Target
 
   @shortdoc "Reports which mutants of your staged code survive the tests"
 
@@ -21,8 +20,7 @@ defmodule Mix.Tasks.Mutate do
     files = source_files(args)
     announce(files)
 
-    targets = Enum.map(files, &%Target{file: &1})
-    report = mutate(targets)
+    report = mutate(files)
 
     render(report)
     exit_for(report)
@@ -30,13 +28,13 @@ defmodule Mix.Tasks.Mutate do
 
   defp mutate([]), do: Report.from_mutants([])
 
-  defp mutate(targets) do
-    target_modules = Muta.modules_under_test(Config.new(targets, []))
+  defp mutate(files) do
+    target_modules = Config.target_modules(Config.new(files, []))
     fingerprint = Cache.fingerprint(test_files(), target_modules)
 
-    {coverage, test_modules, files_by_module} = coverage(fingerprint, targets, target_modules)
+    {coverage, test_modules, files_by_module} = coverage(fingerprint, files, target_modules)
     loader = fn module -> load_test_module(module, files_by_module) end
-    config = Config.new(targets, test_modules, load_test_module: loader)
+    config = Config.new(files, test_modules, load_test_module: loader)
 
     coverage =
       learn_unknown(coverage, config, target_modules, test_modules, fingerprint, files_by_module)
@@ -44,13 +42,13 @@ defmodule Mix.Tasks.Mutate do
     Muta.run(config, coverage)
   end
 
-  defp coverage(fingerprint, targets, target_modules) do
+  defp coverage(fingerprint, files, target_modules) do
     case Cache.fetch(@cache_path, fingerprint) do
       {:ok, {coverage, files_by_module}} ->
         {coverage, Coverage.test_modules_reaching(coverage, target_modules), files_by_module}
 
       :stale ->
-        rebuild(fingerprint, targets)
+        rebuild(fingerprint, files)
     end
   end
 
@@ -81,12 +79,12 @@ defmodule Mix.Tasks.Mutate do
     end
   end
 
-  defp rebuild(fingerprint, targets) do
+  defp rebuild(fingerprint, files) do
     Mix.shell().info("Mapping which tests reach your code. Later runs reuse this.\n")
 
     files_by_module = require_every_test_file()
     test_modules = Map.keys(files_by_module)
-    coverage = Muta.coverage(Config.new(targets, test_modules))
+    coverage = Muta.coverage(Config.new(files, test_modules))
 
     Cache.store(@cache_path, fingerprint, {coverage, files_by_module})
 

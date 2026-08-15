@@ -3,8 +3,9 @@ defmodule Muta.GeneratorTest do
 
   alias Muta.Generator
   alias Muta.Mutator.Comparison
+  alias Muta.Source
 
-  defp generate(source), do: Generator.generate(source, "example.ex", [Comparison])
+  defp generate(code), do: Generator.generate(Source.parse(code, "example.ex"), [Comparison])
 
   test "records where each mutation applies and what it changes" do
     source = ~S"""

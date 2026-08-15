@@ -1,12 +1,41 @@
 defmodule Muta.Source do
+  @enforce_keys [:file, :code, :ast, :modules, :functions_by_line]
+  defstruct [:file, :code, :ast, :modules, :functions_by_line]
+
   @type signature :: {atom(), arity()}
 
-  @spec modules(String.t(), Path.t()) :: [module()]
-  def modules(source, file) do
+  @type t :: %__MODULE__{
+          file: Path.t(),
+          code: String.t(),
+          ast: Macro.t(),
+          modules: [module()],
+          functions_by_line: %{pos_integer() => signature()}
+        }
+
+  @spec read(Path.t()) :: t()
+  def read(file), do: file |> File.read!() |> parse(file)
+
+  @spec parse(String.t(), Path.t()) :: t()
+  def parse(code, file) do
+    ast = Code.string_to_quoted!(code, file: file)
+
+    %__MODULE__{
+      file: file,
+      code: code,
+      ast: ast,
+      modules: modules(ast),
+      functions_by_line: functions_by_line(ast)
+    }
+  end
+
+  @spec signatures(t()) :: [signature()]
+  def signatures(%__MODULE__{} = source) do
+    source.functions_by_line |> Map.values() |> Enum.uniq()
+  end
+
+  defp modules(ast) do
     {_ast, found} =
-      source
-      |> Code.string_to_quoted!(file: file)
-      |> Macro.prewalk([], fn
+      Macro.prewalk(ast, [], fn
         {:defmodule, _meta, [{:__aliases__, _alias_meta, parts} | _rest]} = node, found ->
           {node, [Module.concat(parts) | found]}
 
@@ -17,10 +46,8 @@ defmodule Muta.Source do
     Enum.reverse(found)
   end
 
-  @spec functions_by_line(String.t(), Path.t()) :: %{pos_integer() => signature()}
-  def functions_by_line(source, file) do
-    source
-    |> Code.string_to_quoted!(file: file)
+  defp functions_by_line(ast) do
+    ast
     |> clauses()
     |> Enum.flat_map(fn {signature, span} -> Enum.map(span, &{&1, signature}) end)
     |> Map.new()

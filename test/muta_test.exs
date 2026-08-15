@@ -4,7 +4,6 @@ defmodule MutaTest do
   alias Muta.Config
   alias Muta.Report
   alias Muta.Support.Fixture
-  alias Muta.Target
 
   setup do
     Code.put_compiler_option(:ignore_module_conflict, true)
@@ -67,8 +66,6 @@ defmodule MutaTest do
   end
 
   test "raises when a target file does not exist" do
-    config = Config.new([%Target{file: "does/not/exist.ex"}], [])
-
-    assert_raise File.Error, fn -> Muta.run(config) end
+    assert_raise File.Error, fn -> Config.new(["does/not/exist.ex"], []) end
   end
 end

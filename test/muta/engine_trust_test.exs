@@ -174,7 +174,7 @@ defmodule Muta.EngineTrustTest do
       end
       """)
 
-    config = Config.new([%Muta.Target{file: file}], [test_module])
+    config = Config.new([file], [test_module])
 
     assert_raise UntrustworthyError, ~r/without debug info/, fn ->
       Muta.run(config)

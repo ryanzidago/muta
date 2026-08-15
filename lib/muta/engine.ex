@@ -4,17 +4,15 @@ defmodule Muta.Engine do
   alias Muta.Generator
   alias Muta.Mutant
   alias Muta.Mutation
-  alias Muta.Report
   alias Muta.Source
-  alias Muta.Target
   alias Muta.Timing
   alias Muta.UntrustworthyError
 
   @patience 10
   @min_timeout_ms 200
 
-  @spec run(String.t(), Target.t(), Coverage.t(), Config.t()) :: Report.t()
-  def run(source, %Target{} = target, coverage, %Config{} = config) do
+  @spec run(Source.t(), Coverage.t(), Config.t()) :: [Mutant.t()]
+  def run(%Source{} = source, coverage, %Config{} = config) do
     conflicts_allowed = Code.get_compiler_option(:ignore_module_conflict)
     formatters = ExUnit.configuration()[:formatters]
     only_test_ids = ExUnit.configuration()[:only_test_ids]
@@ -24,7 +22,7 @@ defmodule Muta.Engine do
     ExUnit.configure(formatters: [], max_failures: 1)
 
     try do
-      mutate(source, target, coverage, config)
+      mutate(source, coverage, config)
     after
       Code.put_compiler_option(:ignore_module_conflict, conflicts_allowed)
 
@@ -37,31 +35,28 @@ defmodule Muta.Engine do
     end
   end
 
-  defp mutate(source, %Target{} = target, coverage, %Config{} = config) do
-    originals = Code.compile_string(source, target.file)
+  defp mutate(%Source{} = source, coverage, %Config{} = config) do
+    originals = Code.compile_string(source.code, source.file)
     modules = Enum.map(originals, fn {module, _binary} -> module end)
-    functions = Source.functions_by_line(source, target.file)
     focus = Coverage.focus(coverage, modules)
 
     plans =
       source
-      |> Generator.generate(target.file, config.mutators)
+      |> Generator.generate(config.mutators)
       |> Enum.map(fn mutation ->
-        test_ids = covering_tests(coverage, modules, functions, mutation.line)
+        test_ids = covering_tests(coverage, modules, source.functions_by_line, mutation.line)
 
         {mutation, rounds(test_ids, focus)}
       end)
 
     vouched = vouch_for(ids_from(plans, &Enum.take(&1, 1)), MapSet.new(), config)
 
-    first = Enum.map(plans, &judge_round(&1, 1, originals, target, config))
+    first = Enum.map(plans, &judge_round(&1, 1, originals, source, config))
 
     pending = first |> Enum.filter(&undecided?/1) |> Enum.map(&elem(&1, 0))
     vouch_for(ids_from(pending, &Enum.drop(&1, 1)), vouched, config)
 
-    first
-    |> Enum.map(&settle(&1, originals, target, config))
-    |> Report.from_mutants()
+    Enum.map(first, &settle(&1, originals, source, config))
   end
 
   defp ids_from(plans, which_rounds) do
@@ -72,35 +67,32 @@ defmodule Muta.Engine do
         do: test_id
   end
 
-  defp judge_round({mutation, rounds} = plan, round, originals, target, config) do
+  defp judge_round({mutation, rounds} = plan, round, originals, source, config) do
     case Enum.at(rounds, round - 1) do
       nil -> {plan, :survived, 0}
-      _round -> {plan, judge(mutation, [Enum.at(rounds, round - 1)], originals, target, config)}
+      _round -> {plan, judge(mutation, [Enum.at(rounds, round - 1)], originals, source, config)}
     end
   end
 
   defp undecided?({{_mutation, rounds}, {:survived, _ms}}), do: length(rounds) > 1
   defp undecided?(_judged), do: false
 
-  defp settle({{mutation, _rounds}, :survived, 0}, _originals, _target, _config) do
+  defp settle({{mutation, _rounds}, :survived, 0}, _originals, _source, _config) do
     Mutant.evaluated(mutation, :survived, 0)
   end
 
-  defp settle({{mutation, rounds}, {:survived, ms}}, originals, target, config)
+  defp settle({{mutation, rounds}, {:survived, ms}}, originals, source, config)
        when length(rounds) > 1 do
     {outcome, more_ms} =
-      judge(mutation, Enum.drop(rounds, 1), originals, target, config)
+      judge(mutation, Enum.drop(rounds, 1), originals, source, config)
 
     Mutant.evaluated(mutation, outcome, ms + more_ms)
   end
 
-  defp settle({{mutation, _rounds}, {outcome, ms}}, _originals, _target, _config) do
+  defp settle({{mutation, _rounds}, {outcome, ms}}, _originals, _source, _config) do
     Mutant.evaluated(mutation, outcome, ms)
   end
 
-  # Only the tests a mutant is actually judged by need vouching for, and most
-  # mutants never get past their first round. Vouching happens with the original
-  # code loaded, so it cannot run while a mutant is in place.
   defp vouch_for(test_ids, vouched, %Config{} = config) do
     case Enum.reject(test_ids, &MapSet.member?(vouched, &1)) do
       [] ->
@@ -195,16 +187,16 @@ defmodule Muta.Engine do
     end
   end
 
-  defp judge(%Mutation{} = mutation, rounds, originals, %Target{} = target, config) do
+  defp judge(%Mutation{} = mutation, rounds, originals, %Source{} = source, config) do
     {duration_us, outcome} =
       :timer.tc(fn ->
         try do
-          case compile_mutant(mutation, target) do
+          case compile_mutant(mutation, source.file) do
             :compiled -> verdict(rounds, config)
             :invalid -> :invalid
           end
         after
-          restore(originals, target.file)
+          restore(originals, source.file)
         end
       end)
 
@@ -213,8 +205,8 @@ defmodule Muta.Engine do
     {outcome, div(duration_us, 1000)}
   end
 
-  defp compile_mutant(%Mutation{} = mutation, %Target{} = target) do
-    Code.compile_quoted(mutation.ast, target.file)
+  defp compile_mutant(%Mutation{} = mutation, file) do
+    Code.compile_quoted(mutation.ast, file)
 
     :compiled
   rescue
