@@ -1,24 +1,34 @@
 defmodule Muta do
   alias Muta.Config
+  alias Muta.Coverage
   alias Muta.Engine
   alias Muta.Report
+  alias Muta.Source
   alias Muta.Target
 
-  @spec run(Config.t()) :: Report.t()
-  def run(%Config{} = config) do
-    config.targets
-    |> Enum.flat_map(&mutants_for(&1, config))
-    |> Report.from_mutants()
+  @spec coverage(Config.t()) :: Coverage.t()
+  def coverage(%Config{} = config) do
+    Coverage.build(modules_under_test(config), config.test_modules)
   end
 
-  defp mutants_for(%Target{} = target, %Config{} = config) do
-    source = File.read!(target.file)
+  @spec modules_under_test(Config.t()) :: [module()]
+  def modules_under_test(%Config{} = config) do
+    Enum.flat_map(config.targets, fn %Target{} = target ->
+      target.file |> File.read!() |> Source.modules(target.file)
+    end)
+  end
 
-    report =
-      Engine.run(source, target.file, target.test_modules, config.mutators,
-        baseline_timeout_ms: config.baseline_timeout_ms
-      )
+  @spec run(Config.t()) :: Report.t()
+  def run(%Config{} = config), do: run(config, coverage(config))
 
-    report.mutants
+  @spec run(Config.t(), Coverage.t()) :: Report.t()
+  def run(%Config{} = config, coverage) do
+    config.targets
+    |> Enum.flat_map(fn %Target{} = target ->
+      source = File.read!(target.file)
+      report = Engine.run(source, target, coverage, config)
+      report.mutants
+    end)
+    |> Report.from_mutants()
   end
 end

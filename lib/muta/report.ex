@@ -1,14 +1,13 @@
 defmodule Muta.Report do
   alias Muta.Mutant
 
-  @enforce_keys [:mutants, :killed, :survived, :timed_out, :invalid, :score]
-  defstruct [:mutants, :killed, :survived, :timed_out, :invalid, :score]
+  @enforce_keys [:mutants, :killed, :survived, :invalid, :score]
+  defstruct [:mutants, :killed, :survived, :invalid, :score]
 
   @type t :: %__MODULE__{
           mutants: [Mutant.t()],
           killed: non_neg_integer(),
           survived: non_neg_integer(),
-          timed_out: non_neg_integer(),
           invalid: non_neg_integer(),
           score: float()
         }
@@ -17,15 +16,13 @@ defmodule Muta.Report do
   def from_mutants(mutants) do
     killed = count(mutants, :killed)
     survived = count(mutants, :survived)
-    timed_out = count(mutants, :timed_out)
 
     %__MODULE__{
       mutants: mutants,
       killed: killed,
       survived: survived,
-      timed_out: timed_out,
       invalid: count(mutants, :invalid),
-      score: score(killed + timed_out, survived)
+      score: score(killed, survived)
     }
   end
 

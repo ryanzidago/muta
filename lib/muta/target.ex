@@ -1,9 +1,6 @@
 defmodule Muta.Target do
-  @enforce_keys [:file, :test_modules]
-  defstruct [:file, :test_modules]
+  @enforce_keys [:file]
+  defstruct [:file]
 
-  @type t :: %__MODULE__{
-          file: Path.t(),
-          test_modules: [module()]
-        }
+  @type t :: %__MODULE__{file: Path.t()}
 end

@@ -1,49 +1,77 @@
 defmodule Muta.Engine do
+  alias Muta.Config
+  alias Muta.Coverage
   alias Muta.Generator
   alias Muta.Mutant
   alias Muta.Mutation
   alias Muta.Report
+  alias Muta.Source
+  alias Muta.Target
   alias Muta.UntrustworthyError
 
-  @default_baseline_timeout_ms 30_000
   @patience 10
   @min_timeout_ms 200
 
-  @spec run(String.t(), Path.t(), [module()], [module()], keyword()) :: Report.t()
-  def run(source, file, test_modules, mutators, opts \\ []) do
-    baseline_timeout_ms =
-      Keyword.get(opts, :baseline_timeout_ms, @default_baseline_timeout_ms)
-
+  @spec run(String.t(), Target.t(), Coverage.t(), Config.t()) :: Report.t()
+  def run(source, %Target{} = target, coverage, %Config{} = config) do
     conflicts_allowed = Code.get_compiler_option(:ignore_module_conflict)
     formatters = ExUnit.configuration()[:formatters]
     only_test_ids = ExUnit.configuration()[:only_test_ids]
+    max_failures = ExUnit.configuration()[:max_failures]
+    test_timeout = ExUnit.configuration()[:timeout]
     Code.put_compiler_option(:ignore_module_conflict, true)
-    ExUnit.configure(formatters: [], only_test_ids: test_ids(test_modules))
+    ExUnit.configure(formatters: [], max_failures: 1)
 
     try do
-      originals = Code.compile_string(source, file)
-      baseline_ms = ensure_baseline_is_trustworthy(test_modules, baseline_timeout_ms)
-      timeout_ms = max(baseline_ms * @patience, @min_timeout_ms)
-
-      source
-      |> Generator.generate(file, mutators)
-      |> Enum.map(&evaluate(&1, originals, file, test_modules, timeout_ms))
-      |> Report.from_mutants()
+      mutate(source, target, coverage, config)
     after
       Code.put_compiler_option(:ignore_module_conflict, conflicts_allowed)
-      ExUnit.configure(formatters: formatters, only_test_ids: only_test_ids)
+
+      ExUnit.configure(
+        formatters: formatters,
+        only_test_ids: only_test_ids,
+        max_failures: max_failures,
+        timeout: test_timeout
+      )
     end
   end
 
-  defp test_ids(test_modules) do
-    test_modules
-    |> Enum.flat_map(fn module -> module.__ex_unit__().tests end)
-    |> MapSet.new(fn test -> {test.module, test.name} end)
+  defp mutate(source, %Target{} = target, coverage, %Config{} = config) do
+    originals = Code.compile_string(source, target.file)
+    modules = Enum.map(originals, fn {module, _binary} -> module end)
+    functions = Source.functions_by_line(source, target.file)
+    mutations = Generator.generate(source, target.file, config.mutators)
+
+    reachable =
+      mutations
+      |> Enum.flat_map(&covering_tests(coverage, modules, functions, &1.line))
+      |> Enum.uniq()
+
+    timeout_ms = timeout_for(reachable, config.baseline_timeout_ms)
+    ExUnit.configure(timeout: timeout_ms)
+
+    focus = Coverage.focus(coverage, modules)
+    budget = config.baseline_timeout_ms
+
+    mutations
+    |> Enum.map(&evaluate(&1, originals, modules, functions, coverage, target, focus, budget))
+    |> Report.from_mutants()
   end
 
-  defp ensure_baseline_is_trustworthy(test_modules, timeout_ms) do
-    first = baseline(test_modules, timeout_ms)
-    {duration_us, second} = :timer.tc(fn -> baseline(test_modules, timeout_ms) end)
+  defp timeout_for([], _baseline_timeout_ms), do: @min_timeout_ms
+
+  defp timeout_for(reachable, baseline_timeout_ms) do
+    baseline_ms = ensure_baseline_is_trustworthy(reachable, baseline_timeout_ms)
+
+    max(baseline_ms * @patience, @min_timeout_ms)
+  end
+
+  defp ensure_baseline_is_trustworthy(test_ids, timeout_ms) do
+    ExUnit.configure(only_test_ids: MapSet.new(test_ids))
+    modules = modules_of(test_ids)
+
+    first = baseline(modules, timeout_ms)
+    {duration_us, second} = :timer.tc(fn -> baseline(modules, timeout_ms) end)
 
     ensure_green(first)
     ensure_green(second)
@@ -52,8 +80,12 @@ defmodule Muta.Engine do
     div(duration_us, 1000)
   end
 
-  defp baseline(test_modules, timeout_ms) do
-    task = Task.async(fn -> ExUnit.run(test_modules) end)
+  defp modules_of(test_ids) do
+    test_ids |> Enum.map(fn {module, _name} -> module end) |> Enum.uniq()
+  end
+
+  defp baseline(modules, timeout_ms) do
+    task = Task.async(fn -> ExUnit.run(modules) end)
 
     case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
       {:ok, results} ->
@@ -84,30 +116,81 @@ defmodule Muta.Engine do
             "that have nothing to do with the mutation."
   end
 
-  defp evaluate(%Mutation{} = mutation, originals, file, test_modules, timeout_ms) do
+  defp evaluate(mutation, originals, modules, functions, coverage, target, focus, timeout) do
+    case covering_tests(coverage, modules, functions, mutation.line) do
+      [] -> Mutant.evaluated(mutation, :survived, 0)
+      test_ids -> judge(mutation, originals, target, rounds(test_ids, focus), timeout)
+    end
+  end
+
+  defp rounds(test_ids, focus) do
+    test_ids
+    |> Enum.group_by(fn {module, _name} -> module end)
+    |> Enum.sort_by(fn {module, _ids} -> -Map.get(focus, module, 0) end)
+    |> split_off_closest()
+  end
+
+  defp split_off_closest([]), do: []
+  defp split_off_closest([{module, test_ids}]), do: [{[module], test_ids}]
+
+  defp split_off_closest([{module, test_ids} | rest]) do
+    [
+      {[module], test_ids},
+      {Enum.map(rest, &elem(&1, 0)), Enum.flat_map(rest, &elem(&1, 1))}
+    ]
+  end
+
+  defp covering_tests(coverage, modules, functions, line) do
+    case Map.fetch(functions, line) do
+      {:ok, signature} -> Coverage.tests_covering(coverage, modules, signature)
+      :error -> []
+    end
+  end
+
+  defp judge(%Mutation{} = mutation, originals, %Target{} = target, rounds, timeout_ms) do
     {duration_us, outcome} =
       :timer.tc(fn ->
         try do
-          Code.compile_quoted(mutation.ast, file)
-          verdict(test_modules, timeout_ms)
+          Code.compile_quoted(mutation.ast, target.file)
+          verdict(rounds, timeout_ms)
         rescue
           _error -> :invalid
         after
-          restore(originals, file)
+          restore(originals, target.file)
         end
       end)
 
-    reclaim_mutant_code(originals, outcome)
+    reclaim_mutant_code(originals)
     Mutant.evaluated(mutation, outcome, div(duration_us, 1000))
   end
 
-  defp verdict(test_modules, timeout_ms) do
-    task = Task.async(fn -> ExUnit.run(test_modules) end)
+  defp verdict(rounds, budget_ms) do
+    Enum.reduce_while(rounds, :survived, fn {modules, test_ids}, _so_far ->
+      case run_round(modules, test_ids, budget_ms) do
+        :killed -> {:halt, :killed}
+        :survived -> {:cont, :survived}
+      end
+    end)
+  end
 
-    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
-      {:ok, %{failures: 0}} -> :survived
-      {:ok, %{failures: _}} -> :killed
-      nil -> :timed_out
+  defp run_round(modules, test_ids, budget_ms) do
+    ExUnit.configure(only_test_ids: MapSet.new(test_ids))
+    task = Task.async(fn -> ExUnit.run(modules) end)
+
+    case Task.yield(task, budget_ms) do
+      {:ok, %{failures: 0}} ->
+        :survived
+
+      {:ok, %{failures: _}} ->
+        :killed
+
+      nil ->
+        Task.shutdown(task, :brutal_kill)
+
+        raise UntrustworthyError,
+              "a mutant's tests did not return within #{budget_ms}ms even though ExUnit was " <>
+                "given a shorter per-test timeout. Abandoning the run leaves ExUnit unable " <>
+                "to start another, so the run stops here."
     end
   end
 
@@ -117,11 +200,7 @@ defmodule Muta.Engine do
     Enum.each(originals, fn {module, binary} -> :code.load_binary(module, path, binary) end)
   end
 
-  defp reclaim_mutant_code(originals, :timed_out) do
-    Enum.each(originals, fn {module, _binary} -> :code.purge(module) end)
-  end
-
-  defp reclaim_mutant_code(originals, _ran_to_completion) do
+  defp reclaim_mutant_code(originals) do
     Enum.each(originals, fn {module, _binary} -> ensure_no_process_still_runs_mutant(module) end)
   end
 
