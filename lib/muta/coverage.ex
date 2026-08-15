@@ -31,17 +31,53 @@ defmodule Muta.Coverage do
     |> Enum.uniq()
   end
 
+  @spec note_unreached(t(), [module()], [module()], [{module(), Source.signature()}]) :: t()
+  def note_unreached(coverage, target_modules, test_modules, unknown) do
+    touched = touched_signatures(target_modules, test_modules)
+
+    Enum.reduce(unknown, coverage, fn key, acc ->
+      if MapSet.member?(touched, key), do: acc, else: Map.put(acc, key, [])
+    end)
+  end
+
+  defp touched_signatures(target_modules, test_modules) do
+    only_test_ids = ExUnit.configuration()[:only_test_ids]
+    formatters = ExUnit.configuration()[:formatters]
+    ExUnit.configure(formatters: [], only_test_ids: nil)
+
+    :cover.start()
+    Enum.each(target_modules, &instrument/1)
+
+    try do
+      :cover.reset()
+      ExUnit.run(test_modules)
+
+      for target <- target_modules, signature <- functions_called(target), into: MapSet.new() do
+        {target, signature}
+      end
+    after
+      :cover.stop()
+      Enum.each(target_modules, &reload/1)
+      ExUnit.configure(formatters: formatters, only_test_ids: only_test_ids)
+    end
+  end
+
   @spec focus(t(), [module()]) :: %{module() => pos_integer()}
   def focus(coverage, modules) do
     wanted = MapSet.new(modules)
 
-    for {{module, signature}, test_ids} <- coverage,
-        signature != :any_function,
-        MapSet.member?(wanted, module),
-        {test_module, _name} <- test_ids,
-        reduce: %{} do
-      counts -> Map.update(counts, test_module, 1, &(&1 + 1))
-    end
+    reached =
+      for {{module, signature}, test_ids} <- coverage,
+          signature != :any_function,
+          MapSet.member?(wanted, module),
+          {test_module, _name} <- test_ids,
+          reduce: %{} do
+        seen -> Map.update(seen, test_module, MapSet.new([signature]), &MapSet.put(&1, signature))
+      end
+
+    Map.new(reached, fn {test_module, signatures} ->
+      {test_module, MapSet.size(signatures)}
+    end)
   end
 
   @spec test_modules_reaching(t(), [module()]) :: [module()]

@@ -7,6 +7,7 @@ defmodule Muta.Engine do
   alias Muta.Report
   alias Muta.Source
   alias Muta.Target
+  alias Muta.Timing
   alias Muta.UntrustworthyError
 
   @patience 10
@@ -40,44 +41,98 @@ defmodule Muta.Engine do
     originals = Code.compile_string(source, target.file)
     modules = Enum.map(originals, fn {module, _binary} -> module end)
     functions = Source.functions_by_line(source, target.file)
-    mutations = Generator.generate(source, target.file, config.mutators)
-
-    reachable =
-      mutations
-      |> Enum.flat_map(&covering_tests(coverage, modules, functions, &1.line))
-      |> Enum.uniq()
-
-    timeout_ms = timeout_for(reachable, config.baseline_timeout_ms)
-    ExUnit.configure(timeout: timeout_ms)
-
     focus = Coverage.focus(coverage, modules)
-    budget = config.baseline_timeout_ms
 
-    mutations
-    |> Enum.map(&evaluate(&1, originals, modules, functions, coverage, target, focus, budget))
+    plans =
+      source
+      |> Generator.generate(target.file, config.mutators)
+      |> Enum.map(fn mutation ->
+        test_ids = covering_tests(coverage, modules, functions, mutation.line)
+
+        {mutation, rounds(test_ids, focus)}
+      end)
+
+    vouched = vouch_for(ids_from(plans, &Enum.take(&1, 1)), MapSet.new(), config)
+
+    first = Enum.map(plans, &judge_round(&1, 1, originals, target, config))
+
+    pending = first |> Enum.filter(&undecided?/1) |> Enum.map(&elem(&1, 0))
+    vouch_for(ids_from(pending, &Enum.drop(&1, 1)), vouched, config)
+
+    first
+    |> Enum.map(&settle(&1, originals, target, config))
     |> Report.from_mutants()
   end
 
-  defp timeout_for([], _baseline_timeout_ms), do: @min_timeout_ms
+  defp ids_from(plans, which_rounds) do
+    for {_mutation, rounds} <- plans,
+        {_modules, test_ids} <- which_rounds.(rounds),
+        test_id <- test_ids,
+        uniq: true,
+        do: test_id
+  end
 
-  defp timeout_for(reachable, baseline_timeout_ms) do
-    baseline_ms = ensure_baseline_is_trustworthy(reachable, baseline_timeout_ms)
+  defp judge_round({mutation, rounds} = plan, round, originals, target, config) do
+    case Enum.at(rounds, round - 1) do
+      nil -> {plan, :survived, 0}
+      _round -> {plan, judge(mutation, [Enum.at(rounds, round - 1)], originals, target, config)}
+    end
+  end
 
-    max(baseline_ms * @patience, @min_timeout_ms)
+  defp undecided?({{_mutation, rounds}, {:survived, _ms}}), do: length(rounds) > 1
+  defp undecided?(_judged), do: false
+
+  defp settle({{mutation, _rounds}, :survived, 0}, _originals, _target, _config) do
+    Mutant.evaluated(mutation, :survived, 0)
+  end
+
+  defp settle({{mutation, rounds}, {:survived, ms}}, originals, target, config)
+       when length(rounds) > 1 do
+    {outcome, more_ms} =
+      judge(mutation, Enum.drop(rounds, 1), originals, target, config)
+
+    Mutant.evaluated(mutation, outcome, ms + more_ms)
+  end
+
+  defp settle({{mutation, _rounds}, {outcome, ms}}, _originals, _target, _config) do
+    Mutant.evaluated(mutation, outcome, ms)
+  end
+
+  # Only the tests a mutant is actually judged by need vouching for, and most
+  # mutants never get past their first round. Vouching happens with the original
+  # code loaded, so it cannot run while a mutant is in place.
+  defp vouch_for(test_ids, vouched, %Config{} = config) do
+    case Enum.reject(test_ids, &MapSet.member?(vouched, &1)) do
+      [] ->
+        vouched
+
+      unseen ->
+        Enum.each(modules_of(unseen), config.load_test_module)
+        slowest_ms = ensure_baseline_is_trustworthy(unseen, config.baseline_timeout_ms)
+        ExUnit.configure(timeout: max(slowest_ms * @patience, @min_timeout_ms))
+
+        MapSet.union(vouched, MapSet.new(unseen))
+    end
   end
 
   defp ensure_baseline_is_trustworthy(test_ids, timeout_ms) do
-    ExUnit.configure(only_test_ids: MapSet.new(test_ids))
+    ExUnit.configure(only_test_ids: MapSet.new(test_ids), formatters: [Timing.Formatter])
     modules = modules_of(test_ids)
+    {:ok, _agent} = Timing.start_link()
 
-    first = baseline(modules, timeout_ms)
-    {duration_us, second} = :timer.tc(fn -> baseline(modules, timeout_ms) end)
+    try do
+      first = baseline(modules, timeout_ms)
+      second = baseline(modules, timeout_ms)
 
-    ensure_green(first)
-    ensure_green(second)
-    ensure_repeatable(first, second)
+      ensure_green(first)
+      ensure_green(second)
+      ensure_repeatable(first, second)
 
-    div(duration_us, 1000)
+      Timing.slowest_ms()
+    after
+      Timing.stop()
+      ExUnit.configure(formatters: [])
+    end
   end
 
   defp modules_of(test_ids) do
@@ -116,17 +171,10 @@ defmodule Muta.Engine do
             "that have nothing to do with the mutation."
   end
 
-  defp evaluate(mutation, originals, modules, functions, coverage, target, focus, timeout) do
-    case covering_tests(coverage, modules, functions, mutation.line) do
-      [] -> Mutant.evaluated(mutation, :survived, 0)
-      test_ids -> judge(mutation, originals, target, rounds(test_ids, focus), timeout)
-    end
-  end
-
   defp rounds(test_ids, focus) do
     test_ids
     |> Enum.group_by(fn {module, _name} -> module end)
-    |> Enum.sort_by(fn {module, _ids} -> -Map.get(focus, module, 0) end)
+    |> Enum.sort_by(fn {module, ids} -> {-Map.get(focus, module, 0), length(ids)} end)
     |> split_off_closest()
   end
 
@@ -147,26 +195,35 @@ defmodule Muta.Engine do
     end
   end
 
-  defp judge(%Mutation{} = mutation, originals, %Target{} = target, rounds, timeout_ms) do
+  defp judge(%Mutation{} = mutation, rounds, originals, %Target{} = target, config) do
     {duration_us, outcome} =
       :timer.tc(fn ->
         try do
-          Code.compile_quoted(mutation.ast, target.file)
-          verdict(rounds, timeout_ms)
-        rescue
-          _error -> :invalid
+          case compile_mutant(mutation, target) do
+            :compiled -> verdict(rounds, config)
+            :invalid -> :invalid
+          end
         after
           restore(originals, target.file)
         end
       end)
 
     reclaim_mutant_code(originals)
-    Mutant.evaluated(mutation, outcome, div(duration_us, 1000))
+
+    {outcome, div(duration_us, 1000)}
   end
 
-  defp verdict(rounds, budget_ms) do
+  defp compile_mutant(%Mutation{} = mutation, %Target{} = target) do
+    Code.compile_quoted(mutation.ast, target.file)
+
+    :compiled
+  rescue
+    _a_mutation_the_compiler_rejects -> :invalid
+  end
+
+  defp verdict(rounds, %Config{} = config) do
     Enum.reduce_while(rounds, :survived, fn {modules, test_ids}, _so_far ->
-      case run_round(modules, test_ids, budget_ms) do
+      case run_round(modules, test_ids, config.baseline_timeout_ms) do
         :killed -> {:halt, :killed}
         :survived -> {:cont, :survived}
       end

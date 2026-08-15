@@ -18,6 +18,21 @@ defmodule Muta do
     end)
   end
 
+  @spec unknown_functions(Config.t(), Coverage.t()) :: [{module(), Source.signature()}]
+  def unknown_functions(%Config{} = config, coverage) do
+    for %Target{} = target <- config.targets,
+        source = File.read!(target.file),
+        module <- Source.modules(source, target.file),
+        signature <- signatures(source, target.file),
+        not Map.has_key?(coverage, {module, signature}),
+        uniq: true,
+        do: {module, signature}
+  end
+
+  defp signatures(source, file) do
+    source |> Source.functions_by_line(file) |> Map.values() |> Enum.uniq()
+  end
+
   @spec run(Config.t()) :: Report.t()
   def run(%Config{} = config), do: run(config, coverage(config))
 

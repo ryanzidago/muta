@@ -34,30 +34,51 @@ defmodule Mix.Tasks.Mutate do
     target_modules = Muta.modules_under_test(Config.new(targets, []))
     fingerprint = Cache.fingerprint(test_files(), target_modules)
 
-    {coverage, test_modules} = coverage(fingerprint, targets, target_modules)
+    {coverage, test_modules, files_by_module} = coverage(fingerprint, targets, target_modules)
+    loader = fn module -> load_test_module(module, files_by_module) end
+    config = Config.new(targets, test_modules, load_test_module: loader)
 
-    Muta.run(Config.new(targets, test_modules), coverage)
+    coverage =
+      learn_unknown(coverage, config, target_modules, test_modules, fingerprint, files_by_module)
+
+    Muta.run(config, coverage)
   end
 
   defp coverage(fingerprint, targets, target_modules) do
     case Cache.fetch(@cache_path, fingerprint) do
       {:ok, {coverage, files_by_module}} ->
-        reuse(coverage, files_by_module, target_modules)
+        {coverage, Coverage.test_modules_reaching(coverage, target_modules), files_by_module}
 
       :stale ->
         rebuild(fingerprint, targets)
     end
   end
 
-  defp reuse(coverage, files_by_module, target_modules) do
-    test_modules = Coverage.test_modules_reaching(coverage, target_modules)
+  # A function written since the map was built is in no entry at all, and the
+  # safe reading of that is "every test that reaches this module might reach
+  # it". Running the reaching tests once settles the question instead: whatever
+  # they never call has no test to kill its mutants, which is the answer that
+  # matters most for code you just wrote.
+  defp learn_unknown(coverage, config, target_modules, test_modules, fingerprint, files) do
+    case Muta.unknown_functions(config, coverage) do
+      [] ->
+        coverage
 
-    test_modules
-    |> Enum.map(&Map.fetch!(files_by_module, &1))
-    |> Enum.uniq()
-    |> Enum.each(&Code.require_file/1)
+      unknown ->
+        Enum.each(test_modules, &config.load_test_module.(&1))
+        learned = Coverage.note_unreached(coverage, target_modules, test_modules, unknown)
+        Cache.store(@cache_path, fingerprint, {learned, files})
 
-    {coverage, test_modules}
+        learned
+    end
+  end
+
+  defp load_test_module(module, files_by_module) do
+    if Code.ensure_loaded?(module) do
+      :ok
+    else
+      files_by_module |> Map.fetch!(module) |> Code.require_file()
+    end
   end
 
   defp rebuild(fingerprint, targets) do
@@ -69,7 +90,7 @@ defmodule Mix.Tasks.Mutate do
 
     Cache.store(@cache_path, fingerprint, {coverage, files_by_module})
 
-    {coverage, test_modules}
+    {coverage, test_modules, files_by_module}
   end
 
   defp require_every_test_file do
