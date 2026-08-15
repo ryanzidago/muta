@@ -92,6 +92,41 @@ defmodule Muta.EngineTrustTest do
     end
   end
 
+  test "judges a mutant only by the tests it was given" do
+    Code.put_compiler_option(:ignore_module_conflict, true)
+
+    Code.compile_string(~S"""
+    defmodule UnrelatedFailingTest do
+      use ExUnit.Case, async: false
+
+      test "fails for reasons of its own" do
+        flunk("nothing to do with any mutant")
+      end
+    end
+    """)
+
+    source = ~S"""
+    defmodule IsolatedBands do
+      def band(n) when n < 100, do: :low
+      def band(_n), do: :high
+    end
+    """
+
+    suite = ~S"""
+    defmodule IsolatedBandsTest do
+      use ExUnit.Case, async: false
+
+      test "the threshold itself is high" do
+        assert IsolatedBands.band(100) == :high
+      end
+    end
+    """
+
+    report = run_fixture(source, suite)
+
+    assert report.killed > 0
+  end
+
   test "scores a suite that is green and repeatable" do
     source = ~S"""
     defmodule SteadyBands do

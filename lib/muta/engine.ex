@@ -12,8 +12,9 @@ defmodule Muta.Engine do
     timeout_ms = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
     conflicts_allowed = Code.get_compiler_option(:ignore_module_conflict)
     formatters = ExUnit.configuration()[:formatters]
+    only_test_ids = ExUnit.configuration()[:only_test_ids]
     Code.put_compiler_option(:ignore_module_conflict, true)
-    ExUnit.configure(formatters: [])
+    ExUnit.configure(formatters: [], only_test_ids: test_ids(test_modules))
 
     try do
       originals = Code.compile_string(source, file)
@@ -25,8 +26,14 @@ defmodule Muta.Engine do
       |> Report.from_mutants()
     after
       Code.put_compiler_option(:ignore_module_conflict, conflicts_allowed)
-      ExUnit.configure(formatters: formatters)
+      ExUnit.configure(formatters: formatters, only_test_ids: only_test_ids)
     end
+  end
+
+  defp test_ids(test_modules) do
+    test_modules
+    |> Enum.flat_map(fn module -> module.__ex_unit__().tests end)
+    |> MapSet.new(fn test -> {test.module, test.name} end)
   end
 
   defp ensure_baseline_is_trustworthy(test_modules, timeout_ms) do
