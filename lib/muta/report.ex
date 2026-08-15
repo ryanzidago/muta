@@ -36,8 +36,6 @@ defmodule Muta.Report do
 
   defp count(mutants, outcome), do: Enum.count(mutants, &(&1.outcome == outcome))
 
-  # A mutant that never compiled was never a test of the suite, so it stays out
-  # of the denominator. With nothing left to judge, nothing survived.
   defp score(0, 0), do: 100.0
 
   defp score(killed, survived) do

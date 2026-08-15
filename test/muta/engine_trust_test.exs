@@ -61,6 +61,37 @@ defmodule Muta.EngineTrustTest do
     assert_raise UntrustworthyError, fn -> run_fixture(source, suite) end
   end
 
+  test "refuses when a test leaves a process running the mutant behind" do
+    source = ~S"""
+    defmodule LingeringBands do
+      def band(n) when n < 100, do: :low
+      def band(_n), do: :high
+
+      def linger do
+        Process.sleep(2_000)
+        :done
+      end
+    end
+    """
+
+    suite = ~S"""
+    defmodule LingeringBandsTest do
+      use ExUnit.Case, async: false
+
+      test "spawns a process that outlives it" do
+        spawn(fn -> LingeringBands.linger() end)
+        Process.sleep(20)
+
+        assert LingeringBands.band(100) == :high
+      end
+    end
+    """
+
+    assert_raise UntrustworthyError, ~r/still running mutated/, fn ->
+      run_fixture(source, suite)
+    end
+  end
+
   test "scores a suite that is green and repeatable" do
     source = ~S"""
     defmodule SteadyBands do
