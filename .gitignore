@@ -22,3 +22,10 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 muta-*.tar
 
+# The coverage map muta caches between runs.
+/.muta/
+
+# Editor directories.
+/.idea/
+/.elixir_ls/
+
