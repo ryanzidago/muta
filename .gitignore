@@ -29,3 +29,6 @@ muta-*.tar
 /.idea/
 /.elixir_ls/
 
+
+# macOS.
+.DS_Store
