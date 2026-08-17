@@ -1,8 +1,8 @@
 defmodule Muta.Mutant do
   alias Muta.Mutation
 
-  @enforce_keys [:file, :line, :mutator, :original, :mutated, :outcome, :duration_ms]
-  defstruct [:file, :line, :mutator, :original, :mutated, :outcome, :duration_ms]
+  @enforce_keys [:file, :line, :mutator, :original, :mutated, :outcome]
+  defstruct [:file, :line, :mutator, :original, :mutated, :outcome]
 
   @type outcome :: :killed | :survived | :invalid
 
@@ -12,20 +12,18 @@ defmodule Muta.Mutant do
           mutator: module(),
           original: String.t(),
           mutated: String.t(),
-          outcome: outcome(),
-          duration_ms: non_neg_integer()
+          outcome: outcome()
         }
 
-  @spec evaluated(Mutation.t(), outcome(), non_neg_integer()) :: t()
-  def evaluated(%Mutation{} = mutation, outcome, duration_ms) do
+  @spec evaluated(Mutation.t(), outcome()) :: t()
+  def evaluated(%Mutation{} = mutation, outcome) do
     %__MODULE__{
       file: mutation.file,
       line: mutation.line,
       mutator: mutation.mutator,
       original: mutation.original,
       mutated: mutation.mutated,
-      outcome: outcome,
-      duration_ms: duration_ms
+      outcome: outcome
     }
   end
 end

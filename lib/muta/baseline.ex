@@ -13,7 +13,6 @@ defmodule Muta.Baseline do
       second = run(config)
 
       ensure_green(first)
-      ensure_green(second)
       ensure_repeatable(first, second)
 
       Timing.slowest_ms(timing)
@@ -37,7 +36,16 @@ defmodule Muta.Baseline do
     end
   end
 
-  defp ensure_green(%{failures: 0}), do: :ok
+  defp ensure_green(%{failures: 0, total: total, skipped: skipped, excluded: excluded})
+       when total - skipped - excluded > 0,
+       do: :ok
+
+  defp ensure_green(%{failures: 0}) do
+    raise UntrustworthyError,
+          "the tests you named ran nothing. Every test in them is skipped or excluded by a " <>
+            "tag, so a passing run says only that nothing happened, and every mutant would " <>
+            "be reported as surviving."
+  end
 
   defp ensure_green(%{failures: failures}) do
     raise UntrustworthyError,

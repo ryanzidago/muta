@@ -2,6 +2,7 @@ defmodule Muta.GeneratorTest do
   use ExUnit.Case, async: true
 
   alias Muta.Generator
+  alias Muta.Mutation
   alias Muta.Mutator.Comparison
   alias Muta.Source
 
@@ -49,7 +50,11 @@ defmodule Muta.GeneratorTest do
     """
 
     [boundary, _inverse] = generate(source)
-    mutated_source = Macro.to_string(boundary.ast)
+
+    mutated_source =
+      boundary
+      |> Mutation.apply_to(Source.parse(source, "example.ex").ast)
+      |> Macro.to_string()
 
     assert mutated_source =~ "n <= 0"
     refute mutated_source =~ "n < 0"

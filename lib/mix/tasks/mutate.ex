@@ -25,11 +25,38 @@ defmodule Mix.Tasks.Mutate do
     exit_for(report)
   end
 
-  defp test_modules(files) do
-    for file <- files,
-        {module, _binary} <- List.wrap(Code.require_file(file)),
-        function_exported?(module, :__ex_unit__, 0),
-        do: module
+  defp test_modules(files), do: Enum.flat_map(files, &tests_defined_in/1)
+
+  defp tests_defined_in(file) do
+    case Code.require_file(file) do
+      nil -> raise_already_loaded(file)
+      compiled -> compiled |> exunit_modules() |> ensure_any_tests!(file)
+    end
+  end
+
+  defp exunit_modules(compiled) do
+    for {module, _binary} <- compiled, function_exported?(module, :__ex_unit__, 0), do: module
+  end
+
+  defp ensure_any_tests!([], file) do
+    Mix.raise("""
+    #{file} defines no ExUnit tests.
+
+    Every mutant is judged only by the tests you name. Judging them by a file with
+    no tests in it would report every mutant as surviving without running anything,
+    which is indistinguishable from a real result.
+    """)
+  end
+
+  defp ensure_any_tests!(modules, _file), do: modules
+
+  defp raise_already_loaded(file) do
+    Mix.raise("""
+    #{file} was already loaded, so muta cannot tell which test modules it defines.
+
+    Pass each test file once, and do not pass a file that test_helper.exs already
+    requires.
+    """)
   end
 
   defp ensure_both_given!(sources, test_files) when sources == [] or test_files == [] do

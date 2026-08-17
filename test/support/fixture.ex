@@ -13,6 +13,13 @@ defmodule Muta.Support.Fixture do
     file
   end
 
+  def test_file(dir, name, suite) do
+    file = Path.join(dir, "#{name}_test.exs")
+    File.write!(file, suite)
+
+    file
+  end
+
   def suite_module(suite) do
     [{test_module, _binary} | _rest] = Code.compile_string(suite)
     test_module

@@ -17,29 +17,27 @@ defmodule Muta.Engine do
   end
 
   defp judge(%Mutation{} = mutation, %Original{} = original, %Config{} = config) do
-    {duration_us, outcome} =
-      :timer.tc(fn ->
-        try do
-          case compile_mutant(mutation, original.file) do
-            :compiled -> verdict(config)
-            :invalid -> :invalid
-          end
-        after
-          Original.restore(original)
+    outcome =
+      try do
+        case compile_mutant(mutation, original.source) do
+          :compiled -> verdict(config)
+          :invalid -> :invalid
         end
-      end)
+      after
+        Original.restore(original)
+      end
 
     Original.reclaim(original)
 
-    Mutant.evaluated(mutation, outcome, div(duration_us, 1000))
+    Mutant.evaluated(mutation, outcome)
   end
 
-  defp compile_mutant(%Mutation{} = mutation, file) do
-    Code.compile_quoted(mutation.ast, file)
+  defp compile_mutant(%Mutation{} = mutation, %Source{} = source) do
+    mutation |> Mutation.apply_to(source.ast) |> Code.compile_quoted(source.file)
 
     :compiled
   rescue
-    _a_mutation_the_compiler_rejects -> :invalid
+    CompileError -> :invalid
   end
 
   defp verdict(%Config{} = config) do
@@ -57,8 +55,9 @@ defmodule Muta.Engine do
 
         raise UntrustworthyError,
               "a mutant's tests did not return within #{config.baseline_timeout_ms}ms even " <>
-                "though ExUnit was given a shorter per-test timeout. Abandoning the run " <>
-                "leaves ExUnit unable to start another, so the run stops here."
+                "though ExUnit was given a shorter per-test timeout, so it hung somewhere " <>
+                "the per-test timeout does not reach. The deadline came from timing the " <>
+                "unmutated tests, and that assumption is now broken, so the run stops here."
     end
   end
 end

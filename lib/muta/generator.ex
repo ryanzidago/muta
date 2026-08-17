@@ -30,18 +30,9 @@ defmodule Muta.Generator do
       mutator: mutator,
       original: Macro.to_string(node),
       mutated: Macro.to_string(replacement),
-      ast: replace_at(source.ast, index, replacement)
+      at: index,
+      replacement: replacement
     }
-  end
-
-  defp replace_at(ast, target_index, replacement) do
-    {mutated, _index} =
-      Macro.prewalk(ast, 0, fn
-        _node, index when index == target_index -> {replacement, index + 1}
-        node, index -> {node, index + 1}
-      end)
-
-    mutated
   end
 
   defp line_of({_form, meta, _args}), do: Keyword.fetch!(meta, :line)

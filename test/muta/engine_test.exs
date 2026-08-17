@@ -1,6 +1,7 @@
 defmodule Muta.EngineTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureIO, only: [with_io: 2]
   import ExUnit.CaptureLog, only: [with_log: 1]
 
   alias Muta.Report
@@ -193,5 +194,33 @@ defmodule Muta.EngineTest do
 
     assert %{outcome: :survived} = mutant(report, "n >= 500")
     assert %{outcome: :killed} = mutant(report, "n <= 100")
+  end
+
+  test "reports a mutant the compiler rejects as invalid", %{dir: dir} do
+    config =
+      Fixture.config(
+        dir,
+        "guarded_bands",
+        ~S"""
+        defmodule GuardedBands do
+          def band(n) when n < 100, do: :low
+          def band(_n), do: :high
+        end
+        """,
+        ~S"""
+        defmodule GuardedBandsTest do
+          use ExUnit.Case, async: false
+
+          test "the threshold itself is high" do
+            assert GuardedBands.band(100) == :high
+          end
+        end
+        """,
+        mutators: [Muta.Mutator.Comparison, Muta.Support.IllegalInGuard]
+      )
+
+    {report, _compiler_diagnostic} = with_io(:stderr, fn -> Muta.run(config) end)
+
+    assert %Report{invalid: 1, killed: 1, survived: 1, score: 50.0} = report
   end
 end
