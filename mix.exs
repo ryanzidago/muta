@@ -15,7 +15,7 @@ defmodule Muta.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :tools]
+      extra_applications: [:logger]
     ]
   end
 

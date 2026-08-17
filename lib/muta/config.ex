@@ -2,8 +2,8 @@ defmodule Muta.Config do
   alias Muta.Mutator
   alias Muta.Source
 
-  @enforce_keys [:sources, :test_modules, :mutators, :baseline_timeout_ms, :load_test_module]
-  defstruct [:sources, :test_modules, :mutators, :baseline_timeout_ms, :load_test_module]
+  @enforce_keys [:sources, :test_modules, :mutators, :baseline_timeout_ms]
+  defstruct [:sources, :test_modules, :mutators, :baseline_timeout_ms]
 
   @default_mutators [Mutator.Comparison]
   @default_baseline_timeout_ms 30_000
@@ -12,8 +12,7 @@ defmodule Muta.Config do
           sources: [Source.t()],
           test_modules: [module()],
           mutators: [module()],
-          baseline_timeout_ms: pos_integer(),
-          load_test_module: (module() -> any())
+          baseline_timeout_ms: pos_integer()
         }
 
   @spec new([Path.t()], [module()], keyword()) :: t()
@@ -22,15 +21,7 @@ defmodule Muta.Config do
       sources: Enum.map(files, &Source.read/1),
       test_modules: test_modules,
       mutators: Keyword.get(opts, :mutators, @default_mutators),
-      baseline_timeout_ms: Keyword.get(opts, :baseline_timeout_ms, @default_baseline_timeout_ms),
-      load_test_module: Keyword.get(opts, :load_test_module, &already_loaded/1)
+      baseline_timeout_ms: Keyword.get(opts, :baseline_timeout_ms, @default_baseline_timeout_ms)
     }
   end
-
-  @spec target_modules(t()) :: [module()]
-  def target_modules(%__MODULE__{} = config) do
-    Enum.flat_map(config.sources, & &1.modules)
-  end
-
-  defp already_loaded(_test_module), do: :ok
 end

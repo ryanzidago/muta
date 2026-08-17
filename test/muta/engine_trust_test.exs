@@ -1,7 +1,6 @@
 defmodule Muta.EngineTrustTest do
   use ExUnit.Case, async: false
 
-  alias Muta.Config
   alias Muta.Support.Fixture
   alias Muta.UntrustworthyError
 
@@ -139,45 +138,5 @@ defmodule Muta.EngineTrustTest do
     report = Muta.run(config)
 
     assert report.killed > 0
-  end
-
-  test "refuses when the target was compiled without debug info", %{dir: dir} do
-    Code.put_compiler_option(:debug_info, false)
-
-    on_exit(fn -> Code.put_compiler_option(:debug_info, true) end)
-
-    file = Path.join(dir, "stripped_bands.ex")
-
-    source = ~S"""
-    defmodule StrippedBands do
-      def band(n) when n < 100, do: :low
-      def band(_n), do: :high
-    end
-    """
-
-    File.write!(file, source)
-    Code.prepend_path(dir)
-
-    [{module, binary}] = Code.compile_string(source, file)
-    File.write!(Path.join(dir, "#{module}.beam"), binary)
-    :code.purge(module)
-    :code.load_file(module)
-
-    [{test_module, _binary}] =
-      Code.compile_string(~S"""
-      defmodule StrippedBandsTest do
-        use ExUnit.Case, async: false
-
-        test "the threshold itself is high" do
-          assert StrippedBands.band(100) == :high
-        end
-      end
-      """)
-
-    config = Config.new([file], [test_module])
-
-    assert_raise UntrustworthyError, ~r/without debug info/, fn ->
-      Muta.run(config)
-    end
   end
 end

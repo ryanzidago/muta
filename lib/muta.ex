@@ -1,32 +1,34 @@
 defmodule Muta do
+  alias Muta.Baseline
   alias Muta.Config
-  alias Muta.Coverage
   alias Muta.Engine
   alias Muta.Report
-  alias Muta.Source
+  alias Muta.Settings
 
-  @spec coverage(Config.t()) :: Coverage.t()
-  def coverage(%Config{} = config) do
-    Coverage.build(Config.target_modules(config), config.test_modules)
-  end
-
-  @spec unknown_functions(Config.t(), Coverage.t()) :: [{module(), Source.signature()}]
-  def unknown_functions(%Config{} = config, coverage) do
-    for source <- config.sources,
-        module <- source.modules,
-        signature <- Source.signatures(source),
-        not Coverage.knows?(coverage, module, signature),
-        uniq: true,
-        do: {module, signature}
-  end
+  @patience 10
+  @min_timeout_ms 200
 
   @spec run(Config.t()) :: Report.t()
-  def run(%Config{} = config), do: run(config, coverage(config))
+  def run(%Config{} = config) do
+    Settings.restored_after(fn ->
+      Code.put_compiler_option(:ignore_module_conflict, true)
+      ExUnit.configure(formatters: [], max_failures: 1, only_test_ids: test_ids(config))
+      ExUnit.configure(timeout: per_test_timeout(config))
 
-  @spec run(Config.t(), Coverage.t()) :: Report.t()
-  def run(%Config{} = config, coverage) do
-    config.sources
-    |> Enum.flat_map(&Engine.run(&1, coverage, config))
-    |> Report.from_mutants()
+      config.sources
+      |> Enum.flat_map(&Engine.run(&1, config))
+      |> Report.from_mutants()
+    end)
+  end
+
+  defp per_test_timeout(%Config{} = config) do
+    max(Baseline.slowest_test_ms(config) * @patience, @min_timeout_ms)
+  end
+
+  defp test_ids(%Config{} = config) do
+    for module <- config.test_modules,
+        test <- module.__ex_unit__().tests,
+        into: MapSet.new(),
+        do: {test.module, test.name}
   end
 end

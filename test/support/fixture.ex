@@ -8,17 +8,7 @@ defmodule Muta.Support.Fixture do
   def target(dir, name, source) do
     file = Path.join(dir, "#{name}.ex")
     File.write!(file, source)
-
-    Code.prepend_path(dir)
-    Code.put_compiler_option(:debug_info, true)
-
-    source
-    |> Code.compile_string(file)
-    |> Enum.each(fn {module, binary} ->
-      File.write!(Path.join(dir, "#{module}.beam"), binary)
-      :code.purge(module)
-      {:module, ^module} = :code.load_file(module)
-    end)
+    Code.compile_string(source, file)
 
     file
   end
