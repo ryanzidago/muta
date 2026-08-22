@@ -151,14 +151,14 @@ Eight, all on by default.
 
 | Mutator                                          | Turns                                                       |
 |--------------------------------------------------|-------------------------------------------------------------|
-| [`Comparison`](lib/muta/mutator/comparison.ex)   | `a < b` → `a <= b`, `a < b` → `a > b`, `a == b` → `a != b`  |
-| [`Condition`](lib/muta/mutator/condition.ex)     | `if x do` → `if true do`, then → `if false do`              |
-| [`Result`](lib/muta/mutator/result.ex)           | `:ok` → `:error`, `{:error, r}` → `{:ok, r}`                |
-| [`Boolean`](lib/muta/mutator/boolean.ex)         | `true` → `false`                                            |
-| [`Logical`](lib/muta/mutator/logical.ex)         | `a and b` → `a or b`, `a && b` → `a \|\| b`, `!a` → `a`      |
-| [`Arithmetic`](lib/muta/mutator/arithmetic.ex)   | `a + b` → `a - b`, `a * b` → `a / b`                        |
-| [`Membership`](lib/muta/mutator/membership.ex)   | `a in b` → `a not in b`                                     |
-| [`Counterpart`](lib/muta/mutator/counterpart.ex) | `Enum.filter` → `Enum.reject`, `String.upcase` → `downcase` |
+| [`Comparison`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/comparison.ex)   | `a < b` → `a <= b`, `a < b` → `a > b`, `a == b` → `a != b`  |
+| [`Condition`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/condition.ex)     | `if x do` → `if true do`, then → `if false do`              |
+| [`Result`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/result.ex)           | `:ok` → `:error`, `{:error, r}` → `{:ok, r}`                |
+| [`Boolean`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/boolean.ex)         | `true` → `false`                                            |
+| [`Logical`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/logical.ex)         | `a and b` → `a or b`, `a && b` → `a \|\| b`, `!a` → `a`      |
+| [`Arithmetic`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/arithmetic.ex)   | `a + b` → `a - b`, `a * b` → `a / b`                        |
+| [`Membership`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/membership.ex)   | `a in b` → `a not in b`                                     |
+| [`Counterpart`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/counterpart.ex) | `Enum.filter` → `Enum.reject`, `String.upcase` → `downcase` |
 
 Look at surviving `Condition` mutants first. A surviving `if true` is a branch no
 test goes near, and line coverage still calls that branch covered.
@@ -261,7 +261,7 @@ end
 
 muta wraps atoms as `{:__block__, meta, [atom]}` so `:ok` and `true` carry their
 line. Match that shape to mutate them, like
-[`Result`](lib/muta/mutator/result.ex). The wrapper comes off before anything
+[`Result`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/result.ex). The wrapper comes off before anything
 compiles.
 
 ## Limits
