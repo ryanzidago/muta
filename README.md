@@ -9,6 +9,8 @@
 </p>
 
 <p align="center">
+	<a href="https://hex.pm/packages/muta"><img src="https://img.shields.io/hexpm/v/muta?color=4B275F" alt="Hex version"></a>
+	<a href="https://hexdocs.pm/muta"><img src="https://img.shields.io/badge/hexdocs-muta-6E4A7E" alt="HexDocs"></a>
 	<img src="https://img.shields.io/badge/elixir-~%3E%201.20-4B275F" alt="Elixir ~> 1.20">
 	<img src="https://img.shields.io/badge/status-alpha-F2A63C" alt="Status: alpha">
 	<img src="https://img.shields.io/badge/license-MIT-6E4A7E" alt="License: MIT">
@@ -34,7 +36,7 @@ still green, because no test uses a cart of exactly 5000 cents.
 ## Install
 
 ```elixir
-{:muta, github: "fabioelizandro/muta", only: [:dev, :test]}
+{:muta, "~> 0.1", only: [:dev, :test]}
 ```
 
 muta runs your tests, so the task needs the test environment:
@@ -279,7 +281,6 @@ compiles.
   compiled the expansion, so they'd never run the mutant.
 * Mutants a macro rejects while expanding count as invalid. Ecto query bindings
   (`from b in Booking`) are the usual case.
-* Not on Hex. Install from git.
 
 ## Prior art
 
