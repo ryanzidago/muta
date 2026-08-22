@@ -5,7 +5,7 @@
 <h1 align="center">muta</h1>
 
 <p align="center">
-	Mutation testing for Elixir. You name the code and the tests; it tells you what your tests miss.
+	Mutation testing for Elixir. Name the code and the tests, and it tells you what the tests miss.
 </p>
 
 <p align="center">
@@ -14,215 +14,277 @@
 	<img src="https://img.shields.io/badge/license-MIT-6E4A7E" alt="License: MIT">
 </p>
 
----
+> **Experimental.** muta is alpha. Expect the API to change between releases,
+> and expect rough edges: it has been used seriously on one codebase so far.
+> Read [Limits](#limits) before you rely on it.
 
-Your tests cover the line. That does not mean they pin what it does.
-
-muta changes your code in small ways, re-runs the tests you gave it, and reports
-every change no test noticed:
+Tests can cover every line of a function without checking what it actually does.
+muta makes small changes to your code, runs the tests you named, and reports the
+changes no test caught:
 
 ```
-  lib/store/pricing.ex:5
+  survived  lib/store/pricing.ex:5  Comparison
     - cents > 5000
     + cents >= 5000
-    survived
 ```
 
-Free shipping over $50 can become free shipping at exactly $50 and those tests
-stay green. Nobody tested a cart at 5000 cents.
+Free shipping over $50 is now free shipping at exactly $50, and the suite is
+still green, because no test uses a cart of exactly 5000 cents.
 
 ## Install
 
-1. Add the dependency:
+```elixir
+{:muta, github: "fabioelizandro/muta", only: [:dev, :test]}
+```
 
-	```elixir
-	{:muta, github: "fabioelizandro/muta", only: [:dev, :test]}
-	```
+muta runs your tests, so the task needs the test environment:
 
-2. muta runs your tests in process, so the task needs the test environment:
+```elixir
+def cli do
+  [preferred_envs: [mutate: :test]]
+end
+```
 
-	```elixir
-	def cli do
-	  [preferred_envs: [mutate: :test]]
-	end
-	```
+## Running it
 
-## Usage
-
-Give it the source files to mutate and the test files to judge them by.
+Give it source files to mutate and test files to judge them by. Both flags
+repeat.
 
 ```shell
 mix mutate lib/store/pricing.ex --test test/store/pricing_test.exs
 ```
 
-Both are repeatable:
-
-```shell
-mix mutate lib/store/pricing.ex lib/store/cart.ex \
-  --test test/store/pricing_test.exs --test test/store/cart_test.exs
 ```
-
-```
-$ mix mutate lib/store/pricing.ex --test test/store/pricing_test.exs
 Mutating lib/store/pricing.ex
 Judged by test/store/pricing_test.exs
 
-  lib/store/pricing.ex:5
+  survived  lib/store/pricing.ex:5  Comparison
     - cents > 5000
     + cents >= 5000
-    survived
 
-8 mutants · 7 killed · 1 survived · 0 invalid · 87.5%
+8 mutants · 7 killed · 1 survived · 0 unstable · 0 invalid · 87.5%
 ```
 
-| Outcome      | Means                                                                |
-|--------------|------------------------------------------------------------------------|
-| **killed**   | A test failed. That behaviour is pinned.                               |
-| **survived** | Every test passed. Nothing pins it. This is the output you act on.     |
-| **invalid**  | The compiler rejected the change. Left out of the score.               |
+Name more than one source file and you also get a line per file, so you can see
+which one is weak instead of one blended number. Files muta found nothing to
+mutate in are listed too:
 
-Exit code is `1` when anything survived, `0` when nothing did.
+```
+  lib/store/pricing.ex  8 mutants · 7 killed · 1 survived · 0 unstable · 0 invalid · 87.5%
+  lib/store/cart.ex  no mutants, so nothing here was checked
 
-## muta does not find your tests
+8 mutants · 7 killed · 1 survived · 0 unstable · 0 invalid · 87.5%
 
-This is the one thing to understand before trusting the output.
+1 of the 2 files you named produced no mutants and went unchecked.
+The score above says nothing about them.
+```
 
-muta judges each mutant **only by the tests you name**. A survivor means *those
-tests did not catch it* — not that nothing in your suite would. Name too few
-tests and you will get survivors that some other test already kills.
+## Reading the output
 
-That is a deliberate scope. Working out which tests exercise a given function is
-a genuinely hard problem, and every cheap answer is wrong in a way you cannot
-see: filenames assume a layout, and static call graphs break at protocols,
-behaviours and LiveView callbacks. Runtime coverage answers it properly, and
-costs a full serialised suite run to build.
+Every finding is `outcome  file:line  mutator`, and there are four outcomes:
 
-So muta does not guess. It does one job, and the selection problem stays outside
-where you can see it and solve it however suits you — by hand, from a coverage
-report, or from a tool built for it.
+| Outcome      | Means                                                       | You        |
+|--------------|-------------------------------------------------------------|------------|
+| **killed**   | A test failed, twice. That behaviour is pinned.             | do nothing |
+| **survived** | Every test passed. Nothing pins it.                         | add a test |
+| **unstable** | A test failed, then passed on the re-run.                   | see below  |
+| **invalid**  | The mutated code didn't compile, so no test ran against it. | do nothing |
+
+The score is killed / (killed + survived). Unstable and invalid mutants never
+produced a verdict, so they stay out of it. Exit code is `0` when everything was
+killed, `1` when anything survived or came back unstable, and `2` when muta
+wouldn't score the run at all.
+
+muta runs your tests twice before recording a kill. Tests fail for reasons that
+have nothing to do with the mutation, and a false kill makes the score look
+better than it is. When the first run fails and the second passes you get
+**unstable**, which means your suite gave two answers about the same mutant.
+Re-run it, drop `--workers`, or fix the flaky test.
+
+## You pick the tests
+
+muta judges each mutant only against the test files you name. A survivor means
+those tests didn't catch it, not that nothing in your suite would. Name too few
+and you'll chase survivors some other test already kills.
+
+That's deliberate. Guessing from filenames assumes a layout, static call graphs
+fall apart at protocols and LiveView callbacks, and building a runtime coverage
+map costs a full serialised run of the suite first.
+
+## With Claude Code
+
+Working out which tests exercise a file is something an agent is good at. Put
+this in your `CLAUDE.md`:
+
+````markdown
+## Mutation testing
+
+Before committing, mutation-test the staged source files:
+
+```shell
+mix mutate <source file> --test <its test files>
+```
+
+Read the diff, work out which test files exercise each staged source file, then
+run one command per file so each gets its own score. Run them in parallel.
+
+Exit `0` is clean, `1` needs attention, `2` means muta wouldn't score the run and
+the report says why. Each finding reads `outcome  file:line  mutator`:
+
+- `survived` is a missing assertion. Add the assertion. Never delete the mutant
+  or loosen the code to make it pass.
+- `unstable` means a test failed then passed on the re-run, so the failure wasn't
+  the mutation's doing. Re-run once. If it repeats, the flaky test is the bug.
+- `invalid` means the mutated code didn't compile. Nothing to fix.
+
+A file reported as `no mutants` wasn't checked at all. The score says nothing
+about it, so don't read a pass as covering it.
+
+Skip files defining a `defguard` or `defmacro`, which muta won't mutate.
+````
+
+Wrap it in a skill if you'd rather trigger it by hand than on every commit.
+
+## Mutators
+
+Eight, all on by default.
+
+| Mutator                                          | Turns                                                       |
+|--------------------------------------------------|-------------------------------------------------------------|
+| [`Comparison`](lib/muta/mutator/comparison.ex)   | `a < b` → `a <= b`, `a < b` → `a > b`, `a == b` → `a != b`  |
+| [`Condition`](lib/muta/mutator/condition.ex)     | `if x do` → `if true do`, then → `if false do`              |
+| [`Result`](lib/muta/mutator/result.ex)           | `:ok` → `:error`, `{:error, r}` → `{:ok, r}`                |
+| [`Boolean`](lib/muta/mutator/boolean.ex)         | `true` → `false`                                            |
+| [`Logical`](lib/muta/mutator/logical.ex)         | `a and b` → `a or b`, `a && b` → `a \|\| b`, `!a` → `a`      |
+| [`Arithmetic`](lib/muta/mutator/arithmetic.ex)   | `a + b` → `a - b`, `a * b` → `a / b`                        |
+| [`Membership`](lib/muta/mutator/membership.ex)   | `a in b` → `a not in b`                                     |
+| [`Counterpart`](lib/muta/mutator/counterpart.ex) | `Enum.filter` → `Enum.reject`, `String.upcase` → `downcase` |
+
+Look at surviving `Condition` mutants first. A surviving `if true` is a branch no
+test goes near, and line coverage still calls that branch covered.
+
+Nothing inside `@spec`, `@type`, `@doc`, `@impl` and friends gets mutated. Those
+never reach runtime so no test could tell, and each one would come back as a
+survivor you can't do anything about. On a codebase of 183 files that was 86
+findings.
 
 ## Speed
 
-There is no cache, no coverage map, and nothing written to disk. Every run
-computes from the source in front of it.
-
-On a Phoenix application with roughly 1,900 tests, mutating a domain module
-against its test file takes about **2.2 seconds**, start to finish. Cost scales
-with the tests you name, not with the size of your suite.
-
-## Why it is fast
-
-The usual design copies your project to a temp directory, applies the mutation
-on disk, shells out to `mix test`, and reads stdout. That is a compile and a VM
-boot for every mutant.
-
-muta stays in the BEAM you are already running:
+muta compiles a mutant and loads it into the running VM instead of writing it to
+disk, which costs about 79ms for a 400-line module:
 
 ```
 source → AST → mutate one node → Code.compile_quoted → :code.load_binary
        → ExUnit.run/1 on your tests → restore the original binary
 ```
 
-A mutant is loaded rather than written, which costs milliseconds, and `ExUnit`
-stops at the first failure, so a mutant that dies does so immediately.
+Mutants are judged in parallel, one worker VM each, because the code server
+holds one version of a module at a time. Workers pull from a shared queue, since
+a killed mutant costs a fraction of a second and a survivor costs a full run of
+your tests.
 
-## Mutations
+On a Phoenix app with roughly 1,900 tests, at the default four workers:
 
-One mutator ships today,
-[`Muta.Mutator.Comparison`](lib/muta/mutator/comparison.ex). Comparisons came
-first because that is where off-by-one lives and where weak tests hide.
+| Module under mutation     | Mutants | Time  |
+|---------------------------|---------|-------|
+| a small value module      | 9       | 3.8s  |
+| a webhook parser          | 27      | 3.4s  |
+| a context full of queries | 144     | 108s  |
 
-| Change    | Turns                                       |
-|-----------|-----------------------------------------------|
-| Boundary  | `a < b` → `a <= b`, `a >= b` → `a > b`      |
-| Inverse   | `a < b` → `a > b`, `a >= b` → `a <= b`      |
-| Equality  | `a == b` → `a != b`, `a === b` → `a !== b`  |
+That 144-mutant run takes 269s with `--workers 1` and 102s with `--workers 8`.
 
-## What muta refuses to do
+Four is the default because there's little left to gain past it. More workers
+means more contention, and a test that gets slow enough under load trips its own
+timeout, which muta can only read as the mutant dying. Verdicts have drifted by
+a mutant or two between repeat runs at higher worker counts, usually between
+`survived` and `unstable`. Use `--workers 1` when you need the same number
+twice.
 
-A mutation score you cannot trust is worse than none, because it reads as
-reassurance. muta raises `Muta.UntrustworthyError` and stops when it finds:
+## When muta stops instead of scoring
 
-| It finds                                                    | Because                                                                       |
-|---------------------------------------------------------------|---------------------------------------------------------------------------------|
-| A test failing on your unmutated code                         | Every mutant would look killed and the score would look perfect.               |
-| Two runs of your tests disagreeing                            | A suite that leaks state kills mutants for reasons unrelated to the mutation.  |
-| A process still running a mutant after its test finished      | The next mutant would be judged partly against this one.                       |
-| Your tests not finishing in `:baseline_timeout_ms`            | There is no honest deadline to hold a mutant to.                               |
+A score you can't trust reads as reassurance, so muta raises
+`Muta.UntrustworthyError` rather than print one, when:
+
+* a test fails on your unmutated code, so every mutant would look killed
+* two runs of your tests disagree, so kills mean nothing
+* a worker's tests are red though yours are green, so its VM is set up wrong
+* a process is still running a mutant after its test finished, so the next
+  mutant would be judged partly against this one
+* your tests don't finish in `:baseline_timeout_ms`, so there's no honest
+  deadline to hold a mutant to
 
 ## Programmatic use
 
-The mix task is a shell over the library. Run it inside your test environment
-with ExUnit autorun off and your test files loaded, which is what the task sets
-up for you.
-
 ```elixir
-config = Muta.Config.new(["lib/store/pricing.ex"], [Store.PricingTest])
+config = Muta.Config.new(["lib/store/pricing.ex"], ["test/store/pricing_test.exs"])
 report = Muta.run(config)
 
 report.score                    #=> 87.5
-report.killed                   #=> 7
 Muta.Report.survivors(report)   #=> [%Muta.Mutant{line: 5, original: "cents > 5000", ...}]
 ```
 
-`Muta.Config.new/3` takes source file paths and already-loaded test modules.
+muta loads the test files itself, once here and again in every worker, so pass
+each one once and don't pass anything `test_helper.exs` already requires. It
+calls `Node.start/2` if the VM isn't alive, since the workers need distribution.
 
-| Option                 | Default                     | Sets                                                              |
-|------------------------|-----------------------------|---------------------------------------------------------------------|
-| `:mutators`            | `[Muta.Mutator.Comparison]` | Which mutators to apply.                                           |
-| `:baseline_timeout_ms` | `30_000`                    | How long your tests may take before muta stops trusting them.       |
+| Option                 | Default                | Sets                                               |
+|------------------------|------------------------|-----------------------------------------------------|
+| `:workers`             | `4`                    | Worker VMs judging at once.                        |
+| `:mutators`            | all eight              | Which mutators to apply.                           |
+| `:test_helper`         | `test/test_helper.exs` | What each worker requires before your tests.       |
+| `:baseline_timeout_ms` | `30_000`               | How long your tests may take before muta gives up. |
 
 ## Writing a mutator
 
-`Muta.Mutator` is one callback. Given a node from your syntax tree, return what
-it could become, or `[]` to leave it alone.
+There's one callback. Given a node, return what it could become, or `[]` to
+leave it alone.
 
 ```elixir
-defmodule Store.Mutator.LogicFlip do
+defmodule Store.Mutator.Concat do
   @behaviour Muta.Mutator
 
   @impl Muta.Mutator
-  def mutations({:and, meta, [left, right]}), do: [{:or, meta, [left, right]}]
-  def mutations({:or, meta, [left, right]}), do: [{:and, meta, [left, right]}]
+  def mutations({:<>, meta, [left, right]}), do: [{:<>, meta, [right, left]}]
   def mutations(_node), do: []
 end
 ```
 
-```elixir
-Muta.Config.new(files, test_modules,
-  mutators: [Muta.Mutator.Comparison, Store.Mutator.LogicFlip]
-)
-```
-
-It is a pure function, so it tests without running anything:
+Pass it in `mutators:`, and test it without running anything:
 
 ```elixir
-test "offers or in place of and" do
-  [mutation] = Store.Mutator.LogicFlip.mutations(quote(do: paid? and shipped?))
+test "offers the halves the other way round" do
+  [mutation] = Store.Mutator.Concat.mutations(quote(do: first <> last))
 
-  assert Macro.to_string(mutation) == "paid? or shipped?"
+  assert Macro.to_string(mutation) == "last <> first"
 end
 ```
 
-> **Note**
-> A mutator can only replace nodes that carry line metadata, which means calls,
-> operators and blocks. Bare literals such as `42` and `true` are plain terms in
-> Elixir's syntax tree with no line attached, so mutating them needs a change to
-> how muta parses. That is why there is no literal mutator yet.
+muta wraps atoms as `{:__block__, meta, [atom]}` so `:ok` and `true` carry their
+line. Match that shape to mutate them, like
+[`Result`](lib/muta/mutator/result.ex). The wrapper comes off before anything
+compiles.
 
 ## Limits
 
-* You name the tests. muta does not work out which tests cover your code.
-* One mutator. Arithmetic and return values are not built yet, and a literal
-  mutator needs a change to parsing first.
-* Serial. One mutant at a time, in one VM.
+* You name the tests. muta won't work them out.
+* Some survivors are unkillable. An `:ok` returned from a function nobody reads
+  the result of can't be caught by any test, so go after the survivors that mean
+  something rather than the number.
+* muta can't usefully mutate its own engine. The mutant loads into the VM doing
+  the judging, so it either breaks the run or never gets called. Its pure
+  modules mutation-test fine; `Engine`, `Worker` and `Fleet` don't.
+* No numbers or strings yet. Integer literals are next, and skipped for now
+  because timeouts, HTTP statuses and list indexes make most of them noise.
+* A module defining a `defguard` or `defmacro` is refused. Callers already
+  compiled the expansion, so they'd never run the mutant.
+* Mutants a macro rejects while expanding count as invalid. Ecto query bindings
+  (`from b in Booking`) are the usual case.
 * Not on Hex. Install from git.
 
 ## Prior art
 
-[Stryker](https://stryker-mutator.io) for the mutator catalogue and the
-vocabulary, [mutmut](https://github.com/boxed/mutmut) and
-[Pitest](https://pitest.org) for coverage-driven test selection, and
+[Stryker](https://stryker-mutator.io) for the mutator catalogue,
+[Pitest](https://pitest.org) for the return-value mutators, and
 [go-mutesting](https://github.com/zimmski/go-mutesting) for keeping mutators
 small and independent.
 
