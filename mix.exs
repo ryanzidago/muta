@@ -1,7 +1,7 @@
 defmodule Muta.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/fabioelizandro/muta"
   @description "Mutation testing for Elixir. Name the code and the tests, and it tells you what the tests miss."
 
