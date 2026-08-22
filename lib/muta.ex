@@ -1,8 +1,10 @@
 defmodule Muta do
+  alias Muta.Acceptance
   alias Muta.Baseline
   alias Muta.Config
   alias Muta.Fleet
   alias Muta.Generator
+  alias Muta.Mutation
   alias Muta.Report
   alias Muta.Settings
   alias Muta.Suite
@@ -18,12 +20,21 @@ defmodule Muta do
 
       Baseline.ensure_trustworthy(suite, config)
 
-      config.sources
-      |> Enum.flat_map(&Generator.generate(&1, config.mutators))
+      {judged, skipped} =
+        config.sources
+        |> Enum.flat_map(&Generator.generate(&1, config.mutators))
+        |> Enum.split_with(&on_a_named_line?(&1, config.lines))
+
+      judged
       |> Fleet.judge(config)
-      |> Report.from_mutants(Enum.map(config.sources, & &1.file))
+      |> then(&Acceptance.apply_to(config.acceptances, &1))
+      |> Report.from_mutants(Enum.map(config.sources, & &1.file), length(skipped))
       |> ensure_something_was_scored()
     end)
+  end
+
+  defp on_a_named_line?(%Mutation{} = mutation, lines) do
+    MapSet.member?(Map.fetch!(lines, mutation.file), mutation.line)
   end
 
   defp ensure_something_was_scored(%Report{killed: 0, survived: 0} = report)

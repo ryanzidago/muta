@@ -1,11 +1,12 @@
 defmodule Muta.Mutation do
-  @enforce_keys [:file, :line, :mutator, :original, :mutated, :at, :replacement]
-  defstruct [:file, :line, :mutator, :original, :mutated, :at, :replacement]
+  @enforce_keys [:file, :line, :mutator, :function, :original, :mutated, :at, :replacement]
+  defstruct [:file, :line, :mutator, :function, :original, :mutated, :at, :replacement]
 
   @type t :: %__MODULE__{
           file: Path.t(),
           line: pos_integer(),
           mutator: module(),
+          function: String.t(),
           original: String.t(),
           mutated: String.t(),
           at: non_neg_integer(),

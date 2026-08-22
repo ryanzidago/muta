@@ -1,15 +1,16 @@
 defmodule Muta.Mutant do
   alias Muta.Mutation
 
-  @enforce_keys [:file, :line, :mutator, :original, :mutated, :outcome]
-  defstruct [:file, :line, :mutator, :original, :mutated, :outcome]
+  @enforce_keys [:file, :line, :mutator, :function, :original, :mutated, :outcome]
+  defstruct [:file, :line, :mutator, :function, :original, :mutated, :outcome]
 
-  @type outcome :: :killed | :survived | :unstable | :invalid
+  @type outcome :: :killed | :survived | :accepted | :unstable | :invalid
 
   @type t :: %__MODULE__{
           file: Path.t(),
           line: pos_integer(),
           mutator: module(),
+          function: String.t(),
           original: String.t(),
           mutated: String.t(),
           outcome: outcome()
@@ -21,6 +22,7 @@ defmodule Muta.Mutant do
       file: mutation.file,
       line: mutation.line,
       mutator: mutation.mutator,
+      function: mutation.function,
       original: mutation.original,
       mutated: mutation.mutated,
       outcome: outcome

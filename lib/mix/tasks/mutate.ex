@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.Mutate do
   use Mix.Task
 
+  alias Muta.Acceptance
   alias Muta.Config
-  alias Muta.Mutant
   alias Muta.Report
   alias Muta.UntrustworthyError
 
@@ -14,20 +14,33 @@ defmodule Mix.Tasks.Mutate do
     Mix.Task.run("app.start")
     Application.put_env(:ex_unit, :autorun, false)
 
-    {opts, sources} = OptionParser.parse!(argv, strict: [test: :keep, workers: :integer])
+    {opts, sources} =
+      OptionParser.parse!(argv,
+        strict: [
+          test: :keep,
+          workers: :integer,
+          acceptances_file: :string,
+          since: :string,
+          show_invalid: :boolean
+        ]
+      )
+
     test_files = Keyword.get_values(opts, :test)
 
     ensure_both_given!(sources, test_files)
     announce(sources, test_files)
 
-    report = judge(sources, test_files, Keyword.take(opts, [:workers]))
+    config =
+      Config.new(sources, test_files, Keyword.take(opts, [:workers, :acceptances_file, :since]))
 
-    render(report)
+    report = judge(config)
+
+    render(report, config, Keyword.get(opts, :show_invalid, false))
     exit_for(report)
   end
 
-  defp judge(sources, test_files, opts) do
-    Muta.run(Config.new(sources, test_files, opts))
+  defp judge(%Config{} = config) do
+    Muta.run(config)
   rescue
     refusal in UntrustworthyError ->
       Mix.shell().error("muta refused to score this run.\n\n" <> Exception.message(refusal))
@@ -72,26 +85,109 @@ defmodule Mix.Tasks.Mutate do
     end
   end
 
-  defp render(%Report{mutants: []}) do
+  defp render(%Report{mutants: []}, %Config{}, _show_invalid) do
     Mix.shell().info("No mutants generated. Nothing in these files can be mutated yet.")
   end
 
-  defp render(%Report{} = report) do
-    Enum.each(Report.survivors(report) ++ Report.unstable(report), &render_mutant/1)
+  defp render(%Report{} = report, %Config{} = config, show_invalid) do
+    render_grouped(Report.survivors(report) ++ Report.unstable(report))
 
     report |> Report.by_file() |> render_breakdown()
 
     Mix.shell().info(tally(report))
 
+    render_accepted(Report.accepted(report), config.acceptances)
+    render_invalid(Report.invalid(report), show_invalid)
     render_notes(report)
+    render_unexercised(Report.unexercised(report))
+    render_skipped(report.skipped)
+    render_unused(Acceptance.unused(config.acceptances, report.mutants))
   end
 
-  defp render_mutant(%Mutant{} = mutant) do
+  defp render_accepted([], _acceptances), do: :ok
+
+  defp render_accepted(accepted, acceptances) do
+    Mix.shell().info("")
+
+    accepted
+    |> Enum.group_by(&{&1.file, &1.mutator, &1.original, &1.mutated})
+    |> Enum.sort_by(fn {_pattern, [first | _rest]} -> {first.file, first.line} end)
+    |> Enum.each(&render_accepted_pattern(&1, acceptances))
+  end
+
+  defp render_accepted_pattern({{file, mutator, original, mutated}, [first | _] = mutants}, acc) do
     Mix.shell().info("""
-      #{mutant.outcome}  #{mutant.file}:#{mutant.line}  #{mutator(mutant.mutator)}
-        - #{first_line(mutant.original)}
-        + #{first_line(mutant.mutated)}
+      accepted  #{file}:#{sites(mutants)}  #{mutator(mutator)}
+        - #{first_line(original)}
+        + #{first_line(mutated)}
+        #{Acceptance.reason_for(acc, first)}
     """)
+  end
+
+  defp render_invalid([], _show_invalid), do: :ok
+  defp render_invalid(_invalid, false), do: :ok
+
+  defp render_invalid(invalid, true) do
+    Mix.shell().info("")
+    render_grouped(invalid)
+  end
+
+  defp render_unexercised([]), do: :ok
+
+  defp render_unexercised(functions) do
+    Mix.shell().info("""
+
+    Every mutant in these survived, so the tests you named may not reach them at all:
+
+    #{Enum.map_join(functions, "\n", fn {file, function} -> "  #{file}  #{function}" end)}\
+    """)
+  end
+
+  defp render_skipped(0), do: :ok
+
+  defp render_skipped(skipped) do
+    Mix.shell().info("""
+
+    #{skipped} mutant(s) fell outside the lines --since named and were not judged.
+    The score above covers the changed lines only, and says nothing about the rest.\
+    """)
+  end
+
+  defp render_unused([]), do: :ok
+
+  defp render_unused(unused) do
+    Mix.shell().info("""
+
+    #{length(unused)} accepted mutant(s) in muta.exs matched nothing in this run:
+
+    #{Enum.map_join(unused, "\n", &"  #{&1.file}  #{&1.original} -> #{&1.mutated}")}
+
+    Either the code moved on and the entry is stale, or this run did not cover
+    that file. A stale entry will silently accept a real survivor later.\
+    """)
+  end
+
+  defp render_grouped(mutants) do
+    mutants
+    |> Enum.group_by(&{&1.file, &1.outcome, &1.mutator, &1.original, &1.mutated})
+    |> Enum.sort_by(fn {_pattern, [first | _rest]} -> {first.file, first.line} end)
+    |> Enum.each(&render_pattern/1)
+  end
+
+  defp render_pattern({{file, outcome, mutator, original, mutated}, mutants}) do
+    Mix.shell().info("""
+      #{outcome}  #{file}:#{sites(mutants)}  #{mutator(mutator)}
+        - #{first_line(original)}
+        + #{first_line(mutated)}
+    """)
+  end
+
+  defp sites([mutant]), do: mutant.line
+
+  defp sites(mutants) do
+    lines = mutants |> Enum.map(& &1.line) |> Enum.sort() |> Enum.join(",")
+
+    "#{lines}  (#{length(mutants)} sites)"
   end
 
   defp render_breakdown([_only_one_file]), do: :ok
@@ -112,8 +208,8 @@ defmodule Mix.Tasks.Mutate do
 
   defp tally(%Report{} = report) do
     "#{length(report.mutants)} mutants · #{report.killed} killed · " <>
-      "#{report.survived} survived · #{report.unstable} unstable · " <>
-      "#{report.invalid} invalid · #{report.score}%"
+      "#{report.survived} survived · #{report.accepted} accepted · " <>
+      "#{report.unstable} unstable · #{report.invalid} invalid · #{report.score}%"
   end
 
   defp render_notes(%Report{} = report) do

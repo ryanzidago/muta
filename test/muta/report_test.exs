@@ -9,10 +9,44 @@ defmodule Muta.ReportTest do
       file: file,
       line: line,
       mutator: Muta.Mutator.Comparison,
+      function: "check/1",
       original: "n > #{line}",
       mutated: "n >= #{line}",
       outcome: outcome
     }
+  end
+
+  defp in_function(file, function, outcome) do
+    %Mutant{
+      file: file,
+      line: 1,
+      mutator: Muta.Mutator.Comparison,
+      function: function,
+      original: "n > 1",
+      mutated: "n >= 1",
+      outcome: outcome
+    }
+  end
+
+  test "names a function whose every mutant survived" do
+    report =
+      Report.from_mutants(
+        [
+          in_function("a.ex", "unreached/1", :survived),
+          in_function("a.ex", "unreached/1", :survived),
+          in_function("a.ex", "pinned/1", :survived),
+          in_function("a.ex", "pinned/1", :killed)
+        ],
+        ["a.ex"]
+      )
+
+    assert Report.unexercised(report) == [{"a.ex", "unreached/1"}]
+  end
+
+  test "names no function when nothing survived" do
+    report = Report.from_mutants([in_function("a.ex", "pinned/1", :killed)], ["a.ex"])
+
+    assert Report.unexercised(report) == []
   end
 
   test "counts each outcome and scores the ones that produced a verdict" do

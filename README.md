@@ -89,19 +89,67 @@ Every finding is `outcome  file:line  mutator`, and there are four outcomes:
 |--------------|-------------------------------------------------------------|------------|
 | **killed**   | A test failed, twice. That behaviour is pinned.             | do nothing |
 | **survived** | Every test passed. Nothing pins it.                         | add a test |
+| **accepted** | Survived, and you recorded why no test could kill it.       | do nothing |
 | **unstable** | A test failed, then passed on the re-run.                   | see below  |
 | **invalid**  | The mutated code didn't compile, so no test ran against it. | do nothing |
 
-The score is killed / (killed + survived). Unstable and invalid mutants never
-produced a verdict, so they stay out of it. Exit code is `0` when everything was
-killed, `1` when anything survived or came back unstable, and `2` when muta
+The score is killed / (killed + survived). The other three never produced a
+verdict you can act on, so they stay out of it. Exit code is `0` when nothing
+survived, `1` when anything survived or came back unstable, and `2` when muta
 wouldn't score the run at all.
+
+Repeats of one mutation are collapsed, so ten sites sharing a pattern read as
+one finding across ten lines rather than ten findings. And when every mutant
+inside a function survives, muta says so by name: that usually means the test
+files you named don't reach that function at all, which is a different problem
+from a weak assertion.
 
 muta runs your tests twice before recording a kill. Tests fail for reasons that
 have nothing to do with the mutation, and a false kill makes the score look
 better than it is. When the first run fails and the second passes you get
 **unstable**, which means your suite gave two answers about the same mutant.
 Re-run it, drop `--workers`, or fix the flaky test.
+
+## Mutants no test can kill
+
+Some mutants are **equivalent**: the change is real but nothing observable
+differs, so no test can catch them. `>= now` where `now` was read inside the
+function; a filter that only narrows what a later exact check re-tests. This is
+a known, undecidable problem in mutation testing, and equivalent mutants run
+4-39% of all mutants in real code. Nobody scores 100%.
+
+Left alone they make the exit code useless, because the same survivors fail
+every run forever. Record them in `muta.exs` instead:
+
+```elixir
+[
+  %{
+    file: "lib/store/pricing.ex",
+    original: "cents > 5000",
+    mutated: "cents >= 5000",
+    reason: "no caller can produce a cart at exactly 5000"
+  }
+]
+```
+
+They still show in the report with the reason attached, and they stop failing
+the run. The reason is required, because an accepted mutant is a claim that no
+test could ever kill it and the next reader has to be able to check that claim.
+Matching is on the expression, not the line, so edits above it don't stale the
+record. muta names any entry that matched nothing in the run, since a stale one
+will silently accept a real survivor later.
+
+## Only the lines you changed
+
+A whole context module can take minutes. When you're reviewing a change, mutate
+what changed:
+
+```shell
+mix mutate lib/store/pricing.ex --test test/store/pricing_test.exs --since HEAD
+```
+
+The report says how many mutants fell outside those lines, so a scoped run is
+never mistaken for a full one.
 
 ## You pick the tests
 
@@ -235,6 +283,8 @@ calls `Node.start/2` if the VM isn't alive, since the workers need distribution.
 | `:mutators`            | all eight              | Which mutators to apply.                           |
 | `:test_helper`         | `test/test_helper.exs` | What each worker requires before your tests.       |
 | `:baseline_timeout_ms` | `30_000`               | How long your tests may take before muta gives up. |
+| `:acceptances_file`    | `muta.exs`             | Where accepted equivalent mutants are recorded.    |
+| `:since`               | the whole file         | A git ref; mutate only lines changed since it.     |
 
 ## Writing a mutator
 

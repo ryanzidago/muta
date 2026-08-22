@@ -157,6 +157,82 @@ defmodule Muta.GeneratorTest do
     assert Generator.generate(Source.parse(source, "example.ex"), [Boolean]) == []
   end
 
+  test "leaves a conjunction of type checks in a guard alone, since no test can tell" do
+    source = ~S"""
+    defmodule Example do
+      def fetch(id, scope) when is_binary(id) and is_binary(scope), do: :ok
+      def fetch(_id, _scope), do: :error
+    end
+    """
+
+    assert Generator.generate(Source.parse(source, "example.ex"), [Logical]) == []
+  end
+
+  test "still mutates a comparison sitting in a guard" do
+    source = ~S"""
+    defmodule Example do
+      def adult?(age) when age >= 18, do: true
+    end
+    """
+
+    mutated =
+      source
+      |> Source.parse("example.ex")
+      |> Generator.generate([Comparison])
+      |> Enum.map(& &1.mutated)
+
+    assert mutated == ["age > 18", "age <= 18"]
+  end
+
+  test "still mutates a conjunction of type checks outside a guard" do
+    source = ~S"""
+    defmodule Example do
+      def pair?(a, b), do: is_binary(a) and is_binary(b)
+    end
+    """
+
+    mutated =
+      source
+      |> Source.parse("example.ex")
+      |> Generator.generate([Logical])
+      |> Enum.map(& &1.mutated)
+
+    assert mutated == ["is_binary(a) or is_binary(b)"]
+  end
+
+  test "still mutates a guard mixing a type check with a comparison" do
+    source = ~S"""
+    defmodule Example do
+      def ready?(items, age) when is_list(items) and age >= 18, do: :ok
+    end
+    """
+
+    mutated =
+      source
+      |> Source.parse("example.ex")
+      |> Generator.generate([Logical])
+      |> Enum.map(& &1.mutated)
+
+    assert mutated == ["is_list(items) or age >= 18"]
+  end
+
+  test "records the function each mutation sits in" do
+    source = ~S"""
+    defmodule Example do
+      def free_shipping?(cents), do: cents > 5000
+      defp discounted?(cents, rate) when rate > 0, do: cents > 100
+    end
+    """
+
+    assert [shipping, guard, discount] =
+             Generator.generate(Source.parse(source, "example.ex"), [Comparison])
+             |> Enum.filter(&(&1.mutated =~ ">="))
+
+    assert shipping.function == "free_shipping?/1"
+    assert guard.function == "discounted?/2"
+    assert discount.function == "discounted?/2"
+  end
+
   test "leaves a source with nothing to mutate alone" do
     source = ~S"""
     defmodule Example do

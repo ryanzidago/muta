@@ -66,7 +66,143 @@ defmodule Mix.Tasks.MutateTest do
     assert printed =~ "- cents > 5000"
     assert printed =~ "+ cents >= 5000"
     assert printed =~ "survived"
-    assert printed =~ "2 mutants · 1 killed · 1 survived · 0 unstable · 0 invalid · 50.0%"
+
+    assert printed =~
+             "2 mutants · 1 killed · 1 survived · 0 accepted · 0 unstable · 0 invalid · 50.0%"
+  end
+
+  test "an accepted mutant stops failing the run and shows why", %{dir: dir} do
+    {source, tests} = weakly_tested_gate(dir, "accepted_gate")
+
+    record =
+      Fixture.target(dir, "muta_record", """
+      [
+        %{
+          file: "#{source}",
+          original: "cents > 5000",
+          mutated: "cents >= 5000",
+          reason: "the exact-5000 cart is unreachable from any caller"
+        }
+      ]
+      """)
+
+    Mutate.run([source, "--test", tests, "--workers", "1", "--acceptances-file", record])
+
+    printed = output()
+
+    assert printed =~ "accepted"
+    assert printed =~ "the exact-5000 cart is unreachable from any caller"
+    assert printed =~ "2 mutants · 1 killed · 0 survived · 1 accepted · 0 unstable · 0 invalid"
+  end
+
+  test "says when an accepted mutant matched nothing, since a stale one hides a real survivor",
+       %{dir: dir} do
+    {source, tests} = weakly_tested_gate(dir, "stale_gate")
+
+    record =
+      Fixture.target(dir, "stale_record", """
+      [
+        %{
+          file: "#{source}",
+          original: "cents > 9999",
+          mutated: "cents >= 9999",
+          reason: "deleted long ago"
+        }
+      ]
+      """)
+
+    assert catch_exit(
+             Mutate.run([source, "--test", tests, "--workers", "1", "--acceptances-file", record])
+           ) == {:shutdown, 1}
+
+    assert output() =~ "matched nothing in this run"
+  end
+
+  test "collapses repeats of one accepted pattern too", %{dir: dir} do
+    source =
+      Fixture.target(dir, "twice_gate", """
+      defmodule TwiceGate do
+        def a(cents), do: cents > 5000
+        def b(cents), do: cents > 5000
+      end
+      """)
+
+    tests =
+      Fixture.test_file(dir, "twice_gate", """
+      defmodule TwiceGateTest do
+        use ExUnit.Case, async: false
+
+        test "both read the same way" do
+          assert TwiceGate.a(9_000)
+          assert TwiceGate.b(9_000)
+        end
+      end
+      """)
+
+    record =
+      Fixture.target(dir, "twice_record", """
+      [
+        %{
+          file: "#{source}",
+          original: "cents > 5000",
+          mutated: "cents >= 5000",
+          reason: "the exact-5000 cart is unreachable"
+        }
+      ]
+      """)
+
+    Mutate.run([source, "--test", tests, "--workers", "1", "--acceptances-file", record])
+
+    printed = output()
+
+    assert printed =~ "accepted"
+    assert printed =~ "(2 sites)"
+    assert printed =~ "0 survived · 2 accepted"
+  end
+
+  test "collapses repeats of one pattern into a single finding", %{dir: dir} do
+    source =
+      Fixture.target(dir, "repeated_gate", """
+      defmodule RepeatedGate do
+        def a(cents), do: cents > 5000
+        def b(cents), do: cents > 5000
+      end
+      """)
+
+    tests =
+      Fixture.test_file(dir, "repeated_gate", """
+      defmodule RepeatedGateTest do
+        use ExUnit.Case, async: false
+
+        test "both read the same way" do
+          assert RepeatedGate.a(9_000)
+          assert RepeatedGate.b(9_000)
+        end
+      end
+      """)
+
+    assert catch_exit(Mutate.run([source, "--test", tests, "--workers", "1"])) == {:shutdown, 1}
+
+    printed = output()
+
+    assert printed =~ "(2 sites)"
+    assert printed =~ "2,3"
+  end
+
+  test "names a function nothing reached", %{dir: dir} do
+    {source, tests} = weakly_tested_gate(dir, "unreached_gate")
+
+    assert catch_exit(Mutate.run([source, "--test", tests, "--workers", "1"])) == {:shutdown, 1}
+
+    refute output() =~ "may not reach them at all"
+  end
+
+  test "keeps invalid mutants out of the report unless asked for them", %{dir: dir} do
+    {source, tests} = weakly_tested_gate(dir, "quiet_gate")
+
+    catch_exit(Mutate.run([source, "--test", tests, "--workers", "1"]))
+
+    refute output() =~ "invalid  "
   end
 
   test "exits without failing when every mutant is killed", %{dir: dir} do
@@ -93,7 +229,9 @@ defmodule Mix.Tasks.MutateTest do
       """)
 
     assert Mutate.run([source, "--test", tests, "--workers", "1"]) == :ok
-    assert output() =~ "2 mutants · 2 killed · 0 survived · 0 unstable · 0 invalid · 100.0%"
+
+    assert output() =~
+             "2 mutants · 2 killed · 0 survived · 0 accepted · 0 unstable · 0 invalid · 100.0%"
   end
 
   test "says so when the source has nothing to mutate", %{dir: dir} do
@@ -239,7 +377,10 @@ defmodule Mix.Tasks.MutateTest do
     printed = output()
 
     assert printed =~ "unstable  #{source}:2  Comparison"
-    assert printed =~ "3 mutants · 2 killed · 0 survived · 1 unstable · 0 invalid · 100.0%"
+
+    assert printed =~
+             "3 mutants · 2 killed · 0 survived · 0 accepted · 1 unstable · 0 invalid · 100.0%"
+
     assert printed =~ "failed on the first run and passed on the re-run"
   end
 
@@ -270,7 +411,9 @@ defmodule Mix.Tasks.MutateTest do
 
     printed = output()
 
-    assert printed =~ "3 mutants · 2 killed · 0 survived · 0 unstable · 1 invalid · 100.0%"
+    assert printed =~
+             "3 mutants · 2 killed · 0 survived · 0 accepted · 0 unstable · 1 invalid · 100.0%"
+
     assert printed =~ "1 invalid: the mutated code did not compile"
   end
 
@@ -313,7 +456,9 @@ defmodule Mix.Tasks.MutateTest do
 
     assert printed =~ "#{weak_source}  2 mutants · 1 killed · 1 survived"
     assert printed =~ "#{strong_source}  2 mutants · 2 killed · 0 survived"
-    assert printed =~ "4 mutants · 3 killed · 1 survived · 0 unstable · 0 invalid · 75.0%"
+
+    assert printed =~
+             "4 mutants · 3 killed · 1 survived · 0 accepted · 0 unstable · 0 invalid · 75.0%"
   end
 
   test "says which named source files produced nothing to check", %{dir: dir} do
