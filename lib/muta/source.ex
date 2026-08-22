@@ -9,6 +9,19 @@ defmodule Muta.Source do
 
   @spec parse(String.t(), Path.t()) :: t()
   def parse(code, file) do
-    %__MODULE__{file: file, code: code, ast: Code.string_to_quoted!(code, file: file)}
+    ast = Code.string_to_quoted!(code, file: file, literal_encoder: &locate_atom/2)
+
+    %__MODULE__{file: file, code: code, ast: ast}
   end
+
+  @spec compilable(Macro.t()) :: Macro.t()
+  def compilable(ast) do
+    Macro.prewalk(ast, fn
+      {:__block__, _meta, [atom]} when is_atom(atom) -> atom
+      node -> node
+    end)
+  end
+
+  defp locate_atom(atom, meta) when is_atom(atom), do: {:ok, {:__block__, meta, [atom]}}
+  defp locate_atom(literal, _meta), do: {:ok, literal}
 end

@@ -81,6 +81,41 @@ defmodule Muta.EngineTest do
     assert %{outcome: :killed} = mutant(report, "n <= 100")
   end
 
+  test "a branch no test exercises is reported as survived", %{dir: dir} do
+    config =
+      Fixture.config(
+        dir,
+        "half_tested_rate",
+        ~S"""
+        defmodule HalfTestedRate do
+          def rate(member?) do
+            if member? do
+              :discounted
+            else
+              :full
+            end
+          end
+        end
+        """,
+        ~S"""
+        defmodule HalfTestedRateTest do
+          use ExUnit.Case, async: false
+
+          test "a member is discounted" do
+            assert HalfTestedRate.rate(true) == :discounted
+          end
+        end
+        """
+      )
+
+    {survivors, compiler_output} =
+      with_io(:stderr, fn -> Enum.map(Report.survivors(Muta.run(config)), & &1.mutated) end)
+
+    assert Enum.any?(survivors, &(&1 =~ "if true"))
+    refute Enum.any?(survivors, &(&1 =~ "if false"))
+    assert compiler_output == ""
+  end
+
   test "a mutant that loops forever is killed by ExUnit timing its test out", %{dir: dir} do
     config =
       Fixture.config(
@@ -219,8 +254,6 @@ defmodule Muta.EngineTest do
         mutators: [Muta.Mutator.Comparison, Muta.Support.IllegalInGuard]
       )
 
-    {report, _compiler_diagnostic} = with_io(:stderr, fn -> Muta.run(config) end)
-
-    assert %Report{invalid: 1, killed: 1, survived: 1, score: 50.0} = report
+    assert %Report{invalid: 1, killed: 1, survived: 1, score: 50.0} = Muta.run(config)
   end
 end

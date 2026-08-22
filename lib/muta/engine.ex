@@ -1,26 +1,18 @@
 defmodule Muta.Engine do
   alias Muta.Config
-  alias Muta.Generator
   alias Muta.Mutant
   alias Muta.Mutation
   alias Muta.Original
   alias Muta.Source
+  alias Muta.Suite
   alias Muta.UntrustworthyError
 
-  @spec run(Source.t(), Config.t()) :: [Mutant.t()]
-  def run(%Source{} = source, %Config{} = config) do
-    original = Original.compile(source)
-
-    source
-    |> Generator.generate(config.mutators)
-    |> Enum.map(&judge(&1, original, config))
-  end
-
-  defp judge(%Mutation{} = mutation, %Original{} = original, %Config{} = config) do
+  @spec judge(Mutation.t(), Original.t(), Suite.t(), Config.t()) :: Mutant.t()
+  def judge(%Mutation{} = mutation, %Original{} = original, %Suite{} = suite, %Config{} = config) do
     outcome =
       try do
         case compile_mutant(mutation, original.source) do
-          :compiled -> verdict(config)
+          :compiled -> verdict(suite, config)
           :invalid -> :invalid
         end
       after
@@ -33,22 +25,45 @@ defmodule Muta.Engine do
   end
 
   defp compile_mutant(%Mutation{} = mutation, %Source{} = source) do
-    mutation |> Mutation.apply_to(source.ast) |> Code.compile_quoted(source.file)
+    {outcome, _diagnostics} = Code.with_diagnostics(fn -> load(mutation, source) end)
+
+    outcome
+  end
+
+  defp load(%Mutation{} = mutation, %Source{} = source) do
+    mutation
+    |> Mutation.apply_to(source.ast)
+    |> Source.compilable()
+    |> Code.compile_quoted(source.file)
 
     :compiled
   rescue
-    CompileError -> :invalid
+    _exception -> :invalid
   end
 
-  defp verdict(%Config{} = config) do
-    task = Task.async(fn -> ExUnit.run(config.test_modules) end)
+  defp verdict(%Suite{} = suite, %Config{} = config) do
+    case run_tests(suite, config) do
+      :passed -> :survived
+      :failed -> confirmed_verdict(suite, config)
+    end
+  end
+
+  defp confirmed_verdict(%Suite{} = suite, %Config{} = config) do
+    case run_tests(suite, config) do
+      :failed -> :killed
+      :passed -> :unstable
+    end
+  end
+
+  defp run_tests(%Suite{} = suite, %Config{} = config) do
+    task = Task.async(fn -> ExUnit.run(suite.modules) end)
 
     case Task.yield(task, config.baseline_timeout_ms) do
       {:ok, %{failures: 0}} ->
-        :survived
+        :passed
 
-      {:ok, %{failures: _}} ->
-        :killed
+      {:ok, %{failures: _failures}} ->
+        :failed
 
       nil ->
         Task.shutdown(task, :brutal_kill)
@@ -57,7 +72,7 @@ defmodule Muta.Engine do
               "a mutant's tests did not return within #{config.baseline_timeout_ms}ms even " <>
                 "though ExUnit was given a shorter per-test timeout, so it hung somewhere " <>
                 "the per-test timeout does not reach. The deadline came from timing the " <>
-                "unmutated tests, and that assumption is now broken, so the run stops here."
+                "unmutated suite, so this mutant is not simply slow."
     end
   end
 end

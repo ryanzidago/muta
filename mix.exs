@@ -20,7 +20,7 @@ defmodule Muta.MixProject do
   end
 
   def cli do
-    [preferred_envs: [precommit: :test]]
+    [preferred_envs: [precommit: :test, mutate: :test]]
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]

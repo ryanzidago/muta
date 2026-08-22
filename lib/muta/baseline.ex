@@ -1,29 +1,19 @@
 defmodule Muta.Baseline do
   alias Muta.Config
-  alias Muta.Timing
+  alias Muta.Suite
   alias Muta.UntrustworthyError
 
-  @spec slowest_test_ms(Config.t()) :: non_neg_integer()
-  def slowest_test_ms(%Config{} = config) do
-    {:ok, timing} = Timing.start_link()
-    ExUnit.configure(formatters: [Timing.Formatter], muta_timing: timing)
+  @spec ensure_trustworthy(Suite.t(), Config.t()) :: :ok
+  def ensure_trustworthy(%Suite{} = suite, %Config{} = config) do
+    first = run(suite, config)
+    second = run(suite, config)
 
-    try do
-      first = run(config)
-      second = run(config)
-
-      ensure_green(first)
-      ensure_repeatable(first, second)
-
-      Timing.slowest_ms(timing)
-    after
-      Timing.stop(timing)
-      ExUnit.configure(formatters: [])
-    end
+    ensure_green(first)
+    ensure_repeatable(first, second)
   end
 
-  defp run(%Config{} = config) do
-    task = Task.async(fn -> ExUnit.run(config.test_modules) end)
+  defp run(%Suite{} = suite, %Config{} = config) do
+    task = Task.async(fn -> ExUnit.run(suite.modules) end)
 
     case Task.yield(task, config.baseline_timeout_ms) || Task.shutdown(task, :brutal_kill) do
       {:ok, results} ->

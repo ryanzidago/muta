@@ -22,7 +22,7 @@ defmodule MutaTest do
       """)
 
     weak_suite =
-      Fixture.suite_module(~S"""
+      Fixture.test_file(dir, "weak_gate", ~S"""
       defmodule WeakGateTest do
         use ExUnit.Case, async: false
 
@@ -40,7 +40,7 @@ defmodule MutaTest do
       """)
 
     strong_suite =
-      Fixture.suite_module(~S"""
+      Fixture.test_file(dir, "strong_gate", ~S"""
       defmodule StrongGateTest do
         use ExUnit.Case, async: false
 
@@ -58,11 +58,57 @@ defmodule MutaTest do
       end
       """)
 
-    report = Muta.run(Config.new([weak, strong], [weak_suite, strong_suite]))
+    report =
+      Muta.run(
+        Config.new([weak, strong], [weak_suite, strong_suite],
+          workers: 1,
+          test_helper: Fixture.helper(dir)
+        )
+      )
 
     assert Enum.all?(Report.survivors(report), &(&1.file =~ "weak_gate"))
     assert report.survived == 2
     assert report.killed == 2
+  end
+
+  test "judges every mutant exactly once when several workers share the work", %{dir: dir} do
+    source =
+      Fixture.target(dir, "shared_gates", ~S"""
+      defmodule SharedGates do
+        def open?(n), do: n > 10
+        def big?(n), do: n > 100
+        def huge?(n), do: n > 1000
+      end
+      """)
+
+    tests =
+      Fixture.test_file(dir, "shared_gates", ~S"""
+      defmodule SharedGatesTest do
+        use ExUnit.Case, async: false
+
+        test "the open threshold itself is closed" do
+          refute SharedGates.open?(10)
+        end
+
+        test "a step over the open threshold is open" do
+          assert SharedGates.open?(11)
+        end
+      end
+      """)
+
+    report =
+      Muta.run(Config.new([source], [tests], workers: 3, test_helper: Fixture.helper(dir)))
+
+    assert length(report.mutants) == 6
+    assert report.killed == 2
+    assert report.survived == 4
+
+    assert Enum.map(Report.survivors(report), & &1.mutated) |> Enum.sort() == [
+             "n < 100",
+             "n < 1000",
+             "n >= 100",
+             "n >= 1000"
+           ]
   end
 
   test "raises when a target file does not exist" do

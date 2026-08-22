@@ -4,7 +4,7 @@ defmodule Muta.Mutant do
   @enforce_keys [:file, :line, :mutator, :original, :mutated, :outcome]
   defstruct [:file, :line, :mutator, :original, :mutated, :outcome]
 
-  @type outcome :: :killed | :survived | :invalid
+  @type outcome :: :killed | :survived | :unstable | :invalid
 
   @type t :: %__MODULE__{
           file: Path.t(),

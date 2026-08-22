@@ -73,41 +73,6 @@ defmodule Muta.EngineTrustTest do
     end
   end
 
-  test "refuses when a test leaves a process running the mutant behind", %{dir: dir} do
-    config =
-      Fixture.config(
-        dir,
-        "lingering_bands",
-        ~S"""
-        defmodule LingeringBands do
-          def band(n) when n < 100, do: :low
-          def band(_n), do: :high
-
-          def linger do
-            Process.sleep(2_000)
-            :done
-          end
-        end
-        """,
-        ~S"""
-        defmodule LingeringBandsTest do
-          use ExUnit.Case, async: false
-
-          test "spawns a process that outlives it" do
-            spawn(fn -> LingeringBands.linger() end)
-            Process.sleep(20)
-
-            assert LingeringBands.band(100) == :high
-          end
-        end
-        """
-      )
-
-    assert_raise UntrustworthyError, ~r/still running mutated/, fn ->
-      Muta.run(config)
-    end
-  end
-
   test "judges a mutant only by the tests it was given", %{dir: dir} do
     Code.compile_string(~S"""
     defmodule UnrelatedFailingTest do
@@ -191,37 +156,7 @@ defmodule Muta.EngineTrustTest do
     end)
   end
 
-  test "stops when a mutant outruns the budget its tests were given", %{dir: dir} do
-    config =
-      Fixture.config(
-        dir,
-        "budget_money",
-        ~S"""
-        defmodule BudgetMoney do
-          def format(cents) when cents < 0, do: "-" <> format(-cents)
-          def format(cents), do: "$#{div(cents, 100)}"
-        end
-        """,
-        ~S"""
-        defmodule BudgetMoneyTest do
-          use ExUnit.Case, async: false
-
-          test "formats zero" do
-            Process.sleep(120)
-
-            assert BudgetMoney.format(0) == "$0"
-          end
-        end
-        """,
-        baseline_timeout_ms: 400
-      )
-
-    with_log(fn ->
-      assert_raise UntrustworthyError, ~r/did not return within 400ms/, fn -> Muta.run(config) end
-    end)
-  end
-
-  test "refuses to mutate a module whose macros are already expanded into callers", %{dir: dir} do
+  test "carries a refusal raised inside a worker back to the caller", %{dir: dir} do
     config =
       Fixture.config(
         dir,
