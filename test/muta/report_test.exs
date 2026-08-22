@@ -43,6 +43,19 @@ defmodule Muta.ReportTest do
     assert Report.unexercised(report) == [{"a.ex", "unreached/1"}]
   end
 
+  test "names a function with no kills even when some of its mutants never ran" do
+    report =
+      Report.from_mutants(
+        [
+          in_function("a.ex", "unreached/1", :survived),
+          in_function("a.ex", "unreached/1", :invalid)
+        ],
+        ["a.ex"]
+      )
+
+    assert Report.unexercised(report) == [{"a.ex", "unreached/1"}]
+  end
+
   test "names no function when nothing survived" do
     report = Report.from_mutants([in_function("a.ex", "pinned/1", :killed)], ["a.ex"])
 
