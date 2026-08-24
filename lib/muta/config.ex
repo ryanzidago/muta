@@ -28,6 +28,7 @@ defmodule Muta.Config do
   @default_mutators [
     Mutator.Arithmetic,
     Mutator.Boolean,
+    Mutator.Boundary,
     Mutator.Comparison,
     Mutator.Condition,
     Mutator.Counterpart,

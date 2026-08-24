@@ -48,10 +48,78 @@ defmodule Mix.Tasks.MutateTest do
         test "a small order does not" do
           refute #{Macro.camelize(name)}.free_shipping?(1_000)
         end
+
+        test "a cent over the threshold does" do
+          assert #{Macro.camelize(name)}.free_shipping?(5_001)
+        end
       end
       """)
 
     {source, tests}
+  end
+
+  test "prints the report as json and nothing else when asked for it", %{dir: dir} do
+    {source, tests} = weakly_tested_gate(dir, "json_gate")
+
+    assert catch_exit(Mutate.run([source, "--test", tests, "--workers", "1", "--format", "json"])) ==
+             {:shutdown, 1}
+
+    decoded = output() |> String.trim() |> JSON.decode!()
+
+    assert decoded["score"] == 66.67
+    assert decoded["totals"]["survived"] == 1
+    assert decoded["files"] == [source]
+
+    assert %{"line" => 2, "mutated" => "cents >= 5000", "mutator" => "Comparison"} =
+             Enum.find(decoded["mutants"], &(&1["outcome"] == "survived"))
+  end
+
+  test "refuses a format it does not know rather than guessing", %{dir: dir} do
+    {source, tests} = weakly_tested_gate(dir, "unknown_format")
+
+    assert_raise Mix.Error, ~r/does not know the format "yaml"/, fn ->
+      Mutate.run([source, "--test", tests, "--workers", "1", "--format", "yaml"])
+    end
+  end
+
+  test "says how many mutants it never generated inside a type guard", %{dir: dir} do
+    source =
+      Fixture.target(dir, "guarded_fetch", ~S"""
+      defmodule GuardedFetch do
+        def fetch(id, scope) when is_binary(id) and is_binary(scope), do: :ok
+        def fetch(_id, _scope), do: :error
+      end
+      """)
+
+    tests =
+      Fixture.test_file(dir, "guarded_fetch", ~S"""
+      defmodule GuardedFetchTest do
+        use ExUnit.Case, async: false
+
+        test "both binaries are fetched" do
+          assert GuardedFetch.fetch("a", "b") == :ok
+        end
+
+        test "anything else is not" do
+          assert GuardedFetch.fetch(1, "b") == :error
+        end
+      end
+      """)
+
+    assert Mutate.run([source, "--test", tests, "--workers", "1"]) == :ok
+
+    printed = output()
+
+    assert printed =~ "1 mutant(s) inside type guards were never generated"
+    assert printed =~ "no test can tell"
+  end
+
+  test "says nothing about type guards when none suppressed a mutant", %{dir: dir} do
+    {source, tests} = weakly_tested_gate(dir, "unguarded_gate")
+
+    catch_exit(Mutate.run([source, "--test", tests, "--workers", "1"]))
+
+    refute output() =~ "inside type guards"
   end
 
   test "prints each survivor as a diff and exits 1", %{dir: dir} do
@@ -68,7 +136,7 @@ defmodule Mix.Tasks.MutateTest do
     assert printed =~ "survived"
 
     assert printed =~
-             "2 mutants · 1 killed · 1 survived · 0 accepted · 0 unstable · 0 invalid · 50.0%"
+             "3 mutants · 2 killed · 1 survived · 0 accepted · 0 unstable · 0 invalid · 66.67%"
   end
 
   test "an accepted mutant stops failing the run and shows why", %{dir: dir} do
@@ -92,7 +160,7 @@ defmodule Mix.Tasks.MutateTest do
 
     assert printed =~ "accepted"
     assert printed =~ "the exact-5000 cart is unreachable from any caller"
-    assert printed =~ "2 mutants · 1 killed · 0 survived · 1 accepted · 0 unstable · 0 invalid"
+    assert printed =~ "3 mutants · 2 killed · 0 survived · 1 accepted · 0 unstable · 0 invalid"
   end
 
   test "says when an accepted mutant matched nothing, since a stale one hides a real survivor",
@@ -135,6 +203,11 @@ defmodule Mix.Tasks.MutateTest do
         test "both read the same way" do
           assert TwiceGate.a(9_000)
           assert TwiceGate.b(9_000)
+        end
+
+        test "both pin a cent over the threshold" do
+          assert TwiceGate.a(5_001)
+          assert TwiceGate.b(5_001)
         end
       end
       """)
@@ -231,7 +304,7 @@ defmodule Mix.Tasks.MutateTest do
     assert Mutate.run([source, "--test", tests, "--workers", "1"]) == :ok
 
     assert output() =~
-             "2 mutants · 2 killed · 0 survived · 0 accepted · 0 unstable · 0 invalid · 100.0%"
+             "3 mutants · 3 killed · 0 survived · 0 accepted · 0 unstable · 0 invalid · 100.0%"
   end
 
   test "says so when the source has nothing to mutate", %{dir: dir} do
@@ -341,7 +414,7 @@ defmodule Mix.Tasks.MutateTest do
     source =
       Fixture.target(dir, "wobbly_gate", ~S"""
       defmodule WobblyGate do
-        def exact?(n), do: n == 10
+        def exact?(n, limit), do: n == limit
         def big?(n), do: n > 100
       end
       """)
@@ -379,7 +452,7 @@ defmodule Mix.Tasks.MutateTest do
     assert printed =~ "unstable  #{source}:2  Comparison"
 
     assert printed =~
-             "3 mutants · 2 killed · 0 survived · 0 accepted · 1 unstable · 0 invalid · 100.0%"
+             "4 mutants · 3 killed · 0 survived · 0 accepted · 1 unstable · 0 invalid · 100.0%"
 
     assert printed =~ "failed on the first run and passed on the re-run"
   end
@@ -412,7 +485,7 @@ defmodule Mix.Tasks.MutateTest do
     printed = output()
 
     assert printed =~
-             "3 mutants · 2 killed · 0 survived · 0 accepted · 0 unstable · 1 invalid · 100.0%"
+             "4 mutants · 3 killed · 0 survived · 0 accepted · 0 unstable · 1 invalid · 100.0%"
 
     assert printed =~ "1 invalid: the mutated code did not compile"
   end
@@ -454,11 +527,11 @@ defmodule Mix.Tasks.MutateTest do
 
     printed = output()
 
-    assert printed =~ "#{weak_source}  2 mutants · 1 killed · 1 survived"
-    assert printed =~ "#{strong_source}  2 mutants · 2 killed · 0 survived"
+    assert printed =~ "#{weak_source}  3 mutants · 2 killed · 1 survived"
+    assert printed =~ "#{strong_source}  3 mutants · 3 killed · 0 survived"
 
     assert printed =~
-             "4 mutants · 3 killed · 1 survived · 0 accepted · 0 unstable · 0 invalid · 75.0%"
+             "6 mutants · 5 killed · 1 survived · 0 accepted · 0 unstable · 0 invalid · 83.33%"
   end
 
   test "says which named source files produced nothing to check", %{dir: dir} do
@@ -498,7 +571,7 @@ defmodule Mix.Tasks.MutateTest do
     printed = output()
 
     assert printed =~ "#{quiet}  no mutants, so nothing here was checked"
-    assert printed =~ "#{gate}  2 mutants · 1 killed · 1 survived"
+    assert printed =~ "#{gate}  3 mutants · 2 killed · 1 survived"
     assert printed =~ "1 of the 2 files you named produced no mutants and went unchecked"
   end
 end

@@ -197,7 +197,7 @@ defmodule Muta.EngineTest do
     report = Muta.run(config)
 
     assert %Report{killed: 0, score: +0.0} = report
-    assert length(Report.survivors(report)) == 2
+    assert length(Report.survivors(report)) == 3
   end
 
   test "reports a mutant on a line no test reaches as survived without running", %{dir: dir} do

@@ -24,7 +24,7 @@ defmodule Muta.WorkerTest do
 
       mutants =
         config.sources
-        |> Enum.flat_map(&Generator.generate(&1, config.mutators))
+        |> Enum.flat_map(&elem(Generator.generate(&1, config.mutators), 0))
         |> Enum.map(&Worker.judge(worker, &1))
 
       GenServer.stop(worker)

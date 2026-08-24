@@ -39,21 +39,22 @@ defmodule Muta.Generator do
   @conjunctions [:and, :or, :&&, :||]
   @outside_any_function "(top level)"
 
-  @spec generate(Source.t(), [module()]) :: [Mutation.t()]
+  @spec generate(Source.t(), [module()]) :: {[Mutation.t()], non_neg_integer()}
   def generate(%Source{} = source, mutators) do
-    source.ast
-    |> candidates(mutators)
-    |> Enum.map(&build(&1, source))
+    {found, in_type_guards} = candidates(source.ast, mutators)
+
+    {Enum.map(found, &build(&1, source)), in_type_guards}
   end
 
   defp candidates(ast, mutators) do
-    {_ast, %{found: found}} =
-      Macro.traverse(ast, blank(), &enter(&1, &2, mutators), &leave/2)
+    {_ast, context} = Macro.traverse(ast, blank(), &enter(&1, &2, mutators), &leave/2)
 
-    Enum.reverse(found)
+    {Enum.reverse(context.found), context.in_type_guards}
   end
 
-  defp blank, do: %{index: 0, found: [], annotations: 0, guards: 0, functions: []}
+  defp blank do
+    %{index: 0, found: [], annotations: 0, guards: 0, functions: [], in_type_guards: 0}
+  end
 
   defp enter(node, context, mutators) do
     context = %{
@@ -63,12 +64,17 @@ defmodule Muta.Generator do
         functions: push(definition(node), context.functions)
     }
 
-    {node,
-     %{
-       context
-       | index: context.index + 1,
-         found: offers(node, context, mutators) ++ context.found
-     }}
+    {node, absorb(offers(node, context, mutators), node, context)}
+  end
+
+  defp absorb(offered, node, context) do
+    context = %{context | index: context.index + 1}
+
+    if context.guards > 0 and type_check?(node) do
+      %{context | in_type_guards: context.in_type_guards + length(offered)}
+    else
+      %{context | found: offered ++ context.found}
+    end
   end
 
   defp leave(node, context) do
@@ -84,18 +90,14 @@ defmodule Muta.Generator do
   defp offers(_node, %{annotations: annotations}, _mutators) when annotations > 0, do: []
 
   defp offers(node, context, mutators) do
-    if context.guards > 0 and type_check?(node) do
-      []
-    else
-      mutators
-      |> Enum.flat_map(fn mutator ->
-        Enum.map(
-          mutator.mutations(node),
-          &{context.index, line_of(node), mutator, node, &1, enclosing(context.functions)}
-        )
-      end)
-      |> Enum.reverse()
-    end
+    mutators
+    |> Enum.flat_map(fn mutator ->
+      Enum.map(
+        mutator.mutations(node),
+        &{context.index, line_of(node), mutator, node, &1, enclosing(context.functions)}
+      )
+    end)
+    |> Enum.reverse()
   end
 
   defp annotation({:@, _meta, [{name, _name_meta, _args}]}) when name in @annotations, do: 1

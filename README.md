@@ -11,7 +11,7 @@
 <p align="center">
 	<a href="https://hex.pm/packages/muta"><img src="https://img.shields.io/hexpm/v/muta?color=4B275F" alt="Hex version"></a>
 	<a href="https://hexdocs.pm/muta"><img src="https://img.shields.io/badge/hexdocs-muta-6E4A7E" alt="HexDocs"></a>
-	<img src="https://img.shields.io/badge/elixir-~%3E%201.20-4B275F" alt="Elixir ~> 1.20">
+	<img src="https://img.shields.io/badge/elixir-~%3E%201.19-4B275F" alt="Elixir ~> 1.19">
 	<img src="https://img.shields.io/badge/status-alpha-F2A63C" alt="Status: alpha">
 	<img src="https://img.shields.io/badge/license-MIT-6E4A7E" alt="License: MIT">
 </p>
@@ -36,7 +36,7 @@ still green, because no test uses a cart of exactly 5000 cents.
 ## Install
 
 ```elixir
-{:muta, "~> 0.1", only: [:dev, :test]}
+{:muta, "~> 0.3", only: [:dev, :test]}
 ```
 
 muta runs your tests, so the task needs the test environment:
@@ -151,6 +151,37 @@ mix mutate lib/store/pricing.ex --test test/store/pricing_test.exs --since HEAD
 The report says how many mutants fell outside those lines, so a scoped run is
 never mistaken for a full one.
 
+## Machine-readable output
+
+`--format json` prints the whole report as one JSON document and nothing else,
+for a CI job or a script that wants the numbers rather than the prose:
+
+```shell
+mix mutate lib/store/pricing.ex --test test/store/pricing_test.exs --format json
+```
+
+```json
+{
+  "score": 87.5,
+  "files": ["lib/store/pricing.ex"],
+  "totals": {
+    "mutants": 8, "killed": 7, "survived": 1, "accepted": 0,
+    "unstable": 0, "invalid": 0, "skipped": 0, "in_type_guards": 0
+  },
+  "mutants": [
+    {
+      "file": "lib/store/pricing.ex", "line": 5, "outcome": "survived",
+      "mutator": "Comparison", "function": "free_shipping?/1",
+      "original": "cents > 5000", "mutated": "cents >= 5000"
+    }
+  ],
+  "unexercised": []
+}
+```
+
+The exit code is the same as the human report: `0` clean, `1` something survived
+or came back unstable, `2` muta would not score the run.
+
 ## You pick the tests
 
 muta judges each mutant only against the test files you name. A survivor means
@@ -197,7 +228,7 @@ Wrap it in a skill if you'd rather trigger it by hand than on every commit.
 
 ## Mutators
 
-Eight, all on by default.
+Nine, all on by default.
 
 | Mutator                                          | Turns                                                       |
 |--------------------------------------------------|-------------------------------------------------------------|
@@ -209,14 +240,25 @@ Eight, all on by default.
 | [`Arithmetic`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/arithmetic.ex)   | `a + b` → `a - b`, `a * b` → `a / b`                        |
 | [`Membership`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/membership.ex)   | `a in b` → `a not in b`                                     |
 | [`Counterpart`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/counterpart.ex) | `Enum.filter` → `Enum.reject`, `String.upcase` → `downcase` |
+| [`Boundary`](https://github.com/fabioelizandro/muta/blob/main/lib/muta/mutator/boundary.ex)       | `cents > 5000` → `cents > 5001`, `n == 3` → `n == 2`        |
 
 Look at surviving `Condition` mutants first. A surviving `if true` is a branch no
 test goes near, and line coverage still calls that branch covered.
+
+`Boundary` moves an integer limit by one, and only in the direction `Comparison`
+does not already reach: `>` and `<=` shift up, `>=` and `<` shift down, and an
+equality gets both neighbours. `cents > 4999` would say the same thing as
+`Comparison`'s `cents >= 5000`, so muta does not offer it twice.
 
 Nothing inside `@spec`, `@type`, `@doc`, `@impl` and friends gets mutated. Those
 never reach runtime so no test could tell, and each one would come back as a
 survivor you can't do anything about. On a codebase of 183 files that was 86
 findings.
+
+A conjunction of type checks in a guard is skipped for the same reason: widening
+`is_binary(id) and is_binary(scope)` to `or` only changes which clause matches,
+and the fallback clause answers the same way. The report says how many mutants
+that dropped, so a quiet skip can never flatter the score.
 
 ## Speed
 
@@ -237,11 +279,11 @@ On a Phoenix app with roughly 1,900 tests, at the default four workers:
 
 | Module under mutation     | Mutants | Time  |
 |---------------------------|---------|-------|
-| a small value module      | 9       | 3.8s  |
-| a webhook parser          | 27      | 3.4s  |
-| a context full of queries | 144     | 108s  |
+| a small value module      | 15      | 3.9s  |
+| a webhook parser          | 25      | 3.4s  |
+| a context full of queries | 134     | 90s   |
 
-That 144-mutant run takes 269s with `--workers 1` and 102s with `--workers 8`.
+That 134-mutant run takes 237s with `--workers 1` and 78s with `--workers 8`.
 
 Four is the default because there's little left to gain past it. More workers
 means more contention, and a test that gets slow enough under load trips its own
@@ -325,8 +367,11 @@ compiles.
 * muta can't usefully mutate its own engine. The mutant loads into the VM doing
   the judging, so it either breaks the run or never gets called. Its pure
   modules mutation-test fine; `Engine`, `Worker` and `Fleet` don't.
-* No numbers or strings yet. Integer literals are next, and skipped for now
-  because timeouts, HTTP statuses and list indexes make most of them noise.
+* Integer limits move only where they are compared against. `cents > 5000` gets
+  mutated; the `5000` in `@free_shipping_cents 5000` does not, and neither does a
+  bare literal anywhere else. Knowing a named constant is a boundary needs
+  whole-file analysis, and mutating every integer turns timeouts, HTTP statuses
+  and list indexes into survivors you cannot act on. No string mutants yet.
 * A module defining a `defguard` or `defmacro` is refused. Callers already
   compiled the expansion, so they'd never run the mutant.
 * Mutants a macro rejects while expanding count as invalid. Ecto query bindings

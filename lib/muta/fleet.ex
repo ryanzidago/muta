@@ -2,6 +2,7 @@ defmodule Muta.Fleet do
   alias Muta.Config
   alias Muta.Mutant
   alias Muta.Mutation
+  alias Muta.UntrustworthyError
   alias Muta.Worker
 
   @spec judge([Mutation.t()], Config.t()) :: [Mutant.t()]
@@ -107,10 +108,24 @@ defmodule Muta.Fleet do
     if Node.alive?() do
       :ok
     else
-      {:ok, _pid} = Node.start(:"muta_#{System.pid()}@127.0.0.1", name_domain: :longnames)
-      Node.set_cookie(:muta)
+      start_distribution()
+    end
+  end
 
-      :ok
+  defp start_distribution do
+    case Node.start(:"muta_#{System.pid()}@127.0.0.1", name_domain: :longnames) do
+      {:ok, _pid} ->
+        Node.set_cookie(:muta)
+
+        :ok
+
+      {:error, reason} ->
+        raise UntrustworthyError,
+              "muta could not start distributed Erlang, so it has no worker VMs to judge " <>
+                "mutants in: #{inspect(reason)}. Mutants are judged on separate nodes " <>
+                "because the code server holds one version of a module at a time. Check that " <>
+                "epmd is running and reachable on 127.0.0.1 (`epmd -daemon` starts it), and " <>
+                "that nothing is blocking loopback connections."
     end
   end
 end

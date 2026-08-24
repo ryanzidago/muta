@@ -1,7 +1,7 @@
 defmodule Muta.MixProject do
   use Mix.Project
 
-  @version "0.2.0"
+  @version "0.3.0"
   @source_url "https://github.com/fabioelizandro/muta"
   @description "Mutation testing for Elixir. Name the code and the tests, and it tells you what the tests miss."
 
@@ -9,7 +9,7 @@ defmodule Muta.MixProject do
     [
       app: :muta,
       version: @version,
-      elixir: "~> 1.20",
+      elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),

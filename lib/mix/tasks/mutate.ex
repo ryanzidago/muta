@@ -4,6 +4,7 @@ defmodule Mix.Tasks.Mutate do
   alias Muta.Acceptance
   alias Muta.Config
   alias Muta.Report
+  alias Muta.Report.Json
   alias Muta.UntrustworthyError
 
   @shortdoc "Reports which mutants of the given source files survive the given tests"
@@ -21,22 +22,30 @@ defmodule Mix.Tasks.Mutate do
           workers: :integer,
           acceptances_file: :string,
           since: :string,
-          show_invalid: :boolean
+          show_invalid: :boolean,
+          format: :string
         ]
       )
 
     test_files = Keyword.get_values(opts, :test)
+    format = format!(Keyword.get(opts, :format, "human"))
 
     ensure_both_given!(sources, test_files)
-    announce(sources, test_files)
+    announce(format, sources, test_files)
 
     config =
       Config.new(sources, test_files, Keyword.take(opts, [:workers, :acceptances_file, :since]))
 
     report = judge(config)
 
-    render(report, config, Keyword.get(opts, :show_invalid, false))
+    render(format, report, config, Keyword.get(opts, :show_invalid, false))
     exit_for(report)
+  end
+
+  defp format!(format) when format in ["human", "json"], do: format
+
+  defp format!(format) do
+    Mix.raise("mix mutate does not know the format #{inspect(format)}. Use human or json.")
   end
 
   defp judge(%Config{} = config) do
@@ -62,7 +71,9 @@ defmodule Mix.Tasks.Mutate do
 
   defp ensure_both_given!(_sources, _test_files), do: :ok
 
-  defp announce(sources, test_files) do
+  defp announce("json", _sources, _test_files), do: :ok
+
+  defp announce("human", sources, test_files) do
     Mix.shell().info(
       "Mutating #{Enum.join(sources, ", ")}\n" <>
         "Judged by #{Enum.join(test_files, ", ")}\n"
@@ -85,11 +96,15 @@ defmodule Mix.Tasks.Mutate do
     end
   end
 
-  defp render(%Report{mutants: []}, %Config{}, _show_invalid) do
+  defp render("json", %Report{} = report, %Config{}, _show_invalid) do
+    Mix.shell().info(Json.encode(report))
+  end
+
+  defp render("human", %Report{mutants: []}, %Config{}, _show_invalid) do
     Mix.shell().info("No mutants generated. Nothing in these files can be mutated yet.")
   end
 
-  defp render(%Report{} = report, %Config{} = config, show_invalid) do
+  defp render("human", %Report{} = report, %Config{} = config, show_invalid) do
     render_grouped(Report.survivors(report) ++ Report.unstable(report))
 
     report |> Report.by_file() |> render_breakdown()
@@ -101,6 +116,7 @@ defmodule Mix.Tasks.Mutate do
     render_notes(report)
     render_unexercised(Report.unexercised(report))
     render_skipped(report.skipped)
+    render_type_guards(report.in_type_guards)
     render_unused(Acceptance.unused(config.acceptances, report.mutants))
   end
 
@@ -150,6 +166,18 @@ defmodule Mix.Tasks.Mutate do
 
     #{skipped} mutant(s) fell outside the lines --since named and were not judged.
     The score above covers the changed lines only, and says nothing about the rest.\
+    """)
+  end
+
+  defp render_type_guards(0), do: :ok
+
+  defp render_type_guards(in_type_guards) do
+    Mix.shell().info("""
+
+    #{in_type_guards} mutant(s) inside type guards were never generated. Widening
+    `is_binary(x)` in a guard only changes which clause matches, so the mutant either
+    behaves identically or fails to compile, and no test can tell. They are left out
+    of the run rather than reported as surviving.\
     """)
   end
 

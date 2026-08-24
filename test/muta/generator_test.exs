@@ -11,7 +11,19 @@ defmodule Muta.GeneratorTest do
   alias Muta.Mutator.Result
   alias Muta.Source
 
-  defp generate(code), do: Generator.generate(Source.parse(code, "example.ex"), [Comparison])
+  defp generate(code), do: mutations(Source.parse(code, "example.ex"), [Comparison])
+
+  defp mutations(%Source{} = source, mutators) do
+    {found, _in_type_guards} = Generator.generate(source, mutators)
+
+    found
+  end
+
+  defp in_type_guards(%Source{} = source, mutators) do
+    {_found, in_type_guards} = Generator.generate(source, mutators)
+
+    in_type_guards
+  end
 
   test "records where each mutation applies and what it changes" do
     source = ~S"""
@@ -82,7 +94,7 @@ defmodule Muta.GeneratorTest do
     located =
       source
       |> Source.parse("example.ex")
-      |> Generator.generate([Result])
+      |> mutations([Result])
       |> Enum.map(&{&1.original, &1.line})
 
     assert located == [{":ok", 4}, {":error", 6}]
@@ -102,7 +114,7 @@ defmodule Muta.GeneratorTest do
     lines =
       source
       |> Source.parse("example.ex")
-      |> Generator.generate([Condition])
+      |> mutations([Condition])
       |> Enum.map(& &1.line)
 
     assert lines == [3, 3]
@@ -116,7 +128,7 @@ defmodule Muta.GeneratorTest do
     """
 
     assert [mutation] =
-             Generator.generate(Source.parse(source, "example.ex"), [Logical, Membership])
+             mutations(Source.parse(source, "example.ex"), [Logical, Membership])
 
     assert mutation.mutator == Membership
     assert mutation.original == "role in [:owner]"
@@ -138,7 +150,7 @@ defmodule Muta.GeneratorTest do
     mutated =
       source
       |> Source.parse("example.ex")
-      |> Generator.generate([Comparison, Result])
+      |> mutations([Comparison, Result])
       |> Enum.map(& &1.mutated)
 
     assert mutated == ["n >= 10", "n < 10", ":error", ":ok"]
@@ -154,7 +166,7 @@ defmodule Muta.GeneratorTest do
     end
     """
 
-    assert Generator.generate(Source.parse(source, "example.ex"), [Boolean]) == []
+    assert mutations(Source.parse(source, "example.ex"), [Boolean]) == []
   end
 
   test "leaves a conjunction of type checks in a guard alone, since no test can tell" do
@@ -165,7 +177,28 @@ defmodule Muta.GeneratorTest do
     end
     """
 
-    assert Generator.generate(Source.parse(source, "example.ex"), [Logical]) == []
+    assert mutations(Source.parse(source, "example.ex"), [Logical]) == []
+  end
+
+  test "counts the mutants it did not generate inside a type guard" do
+    source = ~S"""
+    defmodule Example do
+      def fetch(id, scope) when is_binary(id) and is_binary(scope), do: :ok
+      def fetch(_id, _scope), do: :error
+    end
+    """
+
+    assert in_type_guards(Source.parse(source, "example.ex"), [Logical]) == 1
+  end
+
+  test "counts nothing when no type guard suppressed a mutant" do
+    source = ~S"""
+    defmodule Example do
+      def adult?(age) when age >= 18, do: true
+    end
+    """
+
+    assert in_type_guards(Source.parse(source, "example.ex"), [Comparison]) == 0
   end
 
   test "still mutates a comparison sitting in a guard" do
@@ -178,7 +211,7 @@ defmodule Muta.GeneratorTest do
     mutated =
       source
       |> Source.parse("example.ex")
-      |> Generator.generate([Comparison])
+      |> mutations([Comparison])
       |> Enum.map(& &1.mutated)
 
     assert mutated == ["age > 18", "age <= 18"]
@@ -194,7 +227,7 @@ defmodule Muta.GeneratorTest do
     mutated =
       source
       |> Source.parse("example.ex")
-      |> Generator.generate([Logical])
+      |> mutations([Logical])
       |> Enum.map(& &1.mutated)
 
     assert mutated == ["is_binary(a) or is_binary(b)"]
@@ -210,7 +243,7 @@ defmodule Muta.GeneratorTest do
     mutated =
       source
       |> Source.parse("example.ex")
-      |> Generator.generate([Logical])
+      |> mutations([Logical])
       |> Enum.map(& &1.mutated)
 
     assert mutated == ["is_list(items) or age >= 18"]
@@ -225,7 +258,7 @@ defmodule Muta.GeneratorTest do
     """
 
     assert [shipping, guard, discount] =
-             Generator.generate(Source.parse(source, "example.ex"), [Comparison])
+             mutations(Source.parse(source, "example.ex"), [Comparison])
              |> Enum.filter(&(&1.mutated =~ ">="))
 
     assert shipping.function == "free_shipping?/1"

@@ -10,6 +10,7 @@ defmodule Muta.Report do
     :unstable,
     :invalid,
     :skipped,
+    :in_type_guards,
     :score
   ]
   defstruct [
@@ -21,6 +22,7 @@ defmodule Muta.Report do
     :unstable,
     :invalid,
     :skipped,
+    :in_type_guards,
     :score
   ]
 
@@ -33,11 +35,12 @@ defmodule Muta.Report do
           unstable: non_neg_integer(),
           invalid: non_neg_integer(),
           skipped: non_neg_integer(),
+          in_type_guards: non_neg_integer(),
           score: float()
         }
 
-  @spec from_mutants([Mutant.t()], [Path.t()], non_neg_integer()) :: t()
-  def from_mutants(mutants, files, skipped \\ 0) do
+  @spec from_mutants([Mutant.t()], [Path.t()], non_neg_integer(), non_neg_integer()) :: t()
+  def from_mutants(mutants, files, skipped \\ 0, in_type_guards \\ 0) do
     killed = count(mutants, :killed)
     survived = count(mutants, :survived)
 
@@ -50,6 +53,7 @@ defmodule Muta.Report do
       unstable: count(mutants, :unstable),
       invalid: count(mutants, :invalid),
       skipped: skipped,
+      in_type_guards: in_type_guards,
       score: score(killed, survived)
     }
   end

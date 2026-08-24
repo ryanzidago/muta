@@ -28,6 +28,19 @@ defmodule Muta.ReportTest do
     }
   end
 
+  test "counts nothing as skipped or suppressed unless told about it" do
+    report = Report.from_mutants([mutant("a.ex", 2, :killed)], ["a.ex"])
+
+    assert report.skipped == 0
+    assert report.in_type_guards == 0
+  end
+
+  test "carries the mutants a type guard suppressed, since a silent drop flatters the score" do
+    report = Report.from_mutants([mutant("a.ex", 2, :killed)], ["a.ex"], 0, 5)
+
+    assert report.in_type_guards == 5
+  end
+
   test "names a function whose every mutant survived" do
     report =
       Report.from_mutants(

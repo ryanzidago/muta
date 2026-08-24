@@ -67,8 +67,8 @@ defmodule MutaTest do
       )
 
     assert Enum.all?(Report.survivors(report), &(&1.file =~ "weak_gate"))
-    assert report.survived == 2
-    assert report.killed == 2
+    assert report.survived == 3
+    assert report.killed == 3
   end
 
   test "judges every mutant exactly once when several workers share the work", %{dir: dir} do
@@ -99,13 +99,15 @@ defmodule MutaTest do
     report =
       Muta.run(Config.new([source], [tests], workers: 3, test_helper: Fixture.helper(dir)))
 
-    assert length(report.mutants) == 6
-    assert report.killed == 2
-    assert report.survived == 4
+    assert length(report.mutants) == 9
+    assert report.killed == 3
+    assert report.survived == 6
 
     assert Enum.map(Report.survivors(report), & &1.mutated) |> Enum.sort() == [
              "n < 100",
              "n < 1000",
+             "n > 1001",
+             "n > 101",
              "n >= 100",
              "n >= 1000"
            ]

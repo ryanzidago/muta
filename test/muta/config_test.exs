@@ -16,6 +16,12 @@ defmodule Muta.ConfigTest do
     Fixture.target(dir, "priced", "defmodule Priced do\n  def free?(n), do: n > 0\nend\n")
   end
 
+  test "shifts integer limits by default, so an untested boundary is reported", %{dir: dir} do
+    config = Config.new([source(dir)], [])
+
+    assert Muta.Mutator.Boundary in config.mutators
+  end
+
   test "refuses a worker count that would leave every mutant unjudged", %{dir: dir} do
     assert_raise ArgumentError, ~r/at least one worker/, fn ->
       Config.new([source(dir)], [], workers: 0)

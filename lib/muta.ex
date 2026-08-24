@@ -20,15 +20,24 @@ defmodule Muta do
 
       Baseline.ensure_trustworthy(suite, config)
 
-      {judged, skipped} =
+      {generated, in_type_guards} =
         config.sources
-        |> Enum.flat_map(&Generator.generate(&1, config.mutators))
+        |> Enum.map(&Generator.generate(&1, config.mutators))
+        |> Enum.unzip()
+
+      {judged, skipped} =
+        generated
+        |> List.flatten()
         |> Enum.split_with(&on_a_named_line?(&1, config.lines))
 
       judged
       |> Fleet.judge(config)
       |> then(&Acceptance.apply_to(config.acceptances, &1))
-      |> Report.from_mutants(Enum.map(config.sources, & &1.file), length(skipped))
+      |> Report.from_mutants(
+        Enum.map(config.sources, & &1.file),
+        length(skipped),
+        Enum.sum(in_type_guards)
+      )
       |> ensure_something_was_scored()
     end)
   end
