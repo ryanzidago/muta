@@ -11,6 +11,35 @@ defmodule Muta.OriginalTest do
     :ok
   end
 
+  test "recompiles against an absolute path, the way mix compiled the module" do
+    source =
+      Source.parse(
+        ~S"""
+        defmodule DirBound do
+          def dir, do: __DIR__
+        end
+        """,
+        "lib/nested/dir_bound.ex"
+      )
+
+    assert %Original{modules: [{module, _binary}]} = Original.compile(source)
+    assert Path.type(module.dir()) == :absolute
+  end
+
+  test "leaves the file it reports alone, so findings stay readable" do
+    source =
+      Source.parse(
+        ~S"""
+        defmodule ReadableFile do
+          def gate(n), do: n > 5
+        end
+        """,
+        "lib/nested/readable_file.ex"
+      )
+
+    assert Original.compile(source).source.file == "lib/nested/readable_file.ex"
+  end
+
   test "refuses a module that defines a guard, which its callers already expanded" do
     source =
       Source.parse(

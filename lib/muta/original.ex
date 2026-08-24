@@ -9,7 +9,7 @@ defmodule Muta.Original do
 
   @spec compile(Source.t()) :: t()
   def compile(%Source{} = source) do
-    modules = Code.compile_string(source.code, source.file)
+    modules = Code.compile_string(source.code, Path.expand(source.file))
     Enum.each(modules, fn {module, _binary} -> ensure_expands_nothing(module) end)
 
     %__MODULE__{modules: modules, source: source}
