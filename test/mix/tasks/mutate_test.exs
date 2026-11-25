@@ -74,6 +74,59 @@ defmodule Mix.Tasks.MutateTest do
              Enum.find(decoded["mutants"], &(&1["outcome"] == "survived"))
   end
 
+  test "prints incomplete JSON with the failed mutant and exits 2", %{dir: dir} do
+    source =
+      Fixture.target(dir, "timed_out_gate", ~S"""
+      defmodule TimedOutGate do
+        def open?, do: false
+      end
+      """)
+
+    tests =
+      Fixture.test_file(dir, "timed_out_gate", ~S"""
+      defmodule TimedOutGateTest do
+        use ExUnit.Case, async: false
+
+        setup_all do
+          if TimedOutGate.open?(), do: Process.sleep(1_000)
+          :ok
+        end
+
+        test "the gate is boolean" do
+          assert is_boolean(TimedOutGate.open?())
+        end
+      end
+      """)
+
+    assert catch_exit(
+             Mutate.run([
+               source,
+               "--test",
+               tests,
+               "--workers",
+               "1",
+               "--baseline-timeout-ms",
+               "300",
+               "--format",
+               "json"
+             ])
+           ) == {:shutdown, 2}
+
+    decoded = output() |> String.trim() |> JSON.decode!()
+
+    assert decoded["complete"] == false
+    assert decoded["score"] == nil
+    assert decoded["totals"]["unjudged"] == 1
+
+    assert [%{"file" => ^source, "line" => 2, "at" => at, "reason" => reason}] =
+             decoded["failures"]
+
+    assert is_integer(at)
+    assert reason =~ "within 300ms"
+    assert decoded["mutants"] == []
+    assert decoded["pending"] == []
+  end
+
   test "refuses a format it does not know rather than guessing", %{dir: dir} do
     {source, tests} = weakly_tested_gate(dir, "unknown_format")
 

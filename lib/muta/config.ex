@@ -63,7 +63,8 @@ defmodule Muta.Config do
       test_helper: Path.expand(Keyword.get(opts, :test_helper, @default_test_helper)),
       mutators: Keyword.get(opts, :mutators, @default_mutators),
       workers: workers(Keyword.get(opts, :workers, @default_workers)),
-      baseline_timeout_ms: Keyword.get(opts, :baseline_timeout_ms, @default_baseline_timeout_ms),
+      baseline_timeout_ms:
+        baseline_timeout_ms(Keyword.get(opts, :baseline_timeout_ms, @default_baseline_timeout_ms)),
       acceptances:
         Acceptance.read(Keyword.get(opts, :acceptances_file, @default_acceptances_file)),
       lines: lines(sources, Keyword.get(opts, :since, @whole_file))
@@ -84,5 +85,13 @@ defmodule Muta.Config do
     raise ArgumentError,
           "muta needs at least one worker to judge mutants, got #{inspect(count)}. " <>
             "With none, every mutant would go unjudged and the run would score 100%."
+  end
+
+  defp baseline_timeout_ms(timeout) when is_integer(timeout) and timeout > 0, do: timeout
+
+  defp baseline_timeout_ms(timeout) do
+    raise ArgumentError,
+          "muta needs a positive baseline timeout in milliseconds, got #{inspect(timeout)}. " <>
+            "With none, it cannot distinguish a slow mutant from a finished test attempt."
   end
 end
