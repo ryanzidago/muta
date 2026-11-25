@@ -69,10 +69,8 @@ defmodule Muta.Engine do
         Task.shutdown(task, :brutal_kill)
 
         raise UntrustworthyError,
-              "a mutant's tests did not return within #{config.baseline_timeout_ms}ms even " <>
-                "though ExUnit was given a shorter per-test timeout, so it hung somewhere " <>
-                "the per-test timeout does not reach. The deadline came from timing the " <>
-                "unmutated suite, so this mutant is not simply slow."
+              "a mutant's tests did not return within #{config.baseline_timeout_ms}ms. This is the configured " <>
+                "overall timeout for one mutant test attempt; the mutation has no verdict."
     end
   end
 end

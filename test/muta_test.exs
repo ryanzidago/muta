@@ -2,6 +2,7 @@ defmodule MutaTest do
   use ExUnit.Case, async: false
 
   alias Muta.Config
+  alias Muta.Mutation
   alias Muta.Report
   alias Muta.Support.Fixture
 
@@ -113,7 +114,138 @@ defmodule MutaTest do
            ]
   end
 
+  test "keeps completed verdicts, stops dispatching and records failed and pending identities",
+       %{dir: dir} do
+    slow = flag_source(dir, "slow_gate")
+    fast = flag_source(dir, "fast_gate")
+    drain = flag_source(dir, "drain_gate")
+    in_flight = flag_source(dir, "in_flight_gate")
+    pending = flag_source(dir, "pending_gate")
+
+    tests =
+      Fixture.test_file(dir, "incomplete_gates", ~S"""
+      defmodule IncompleteGatesTest do
+        use ExUnit.Case, async: false
+
+        setup_all do
+          cond do
+            SlowGate.open?() -> Process.sleep(8_000)
+            DrainGate.open?() -> Process.sleep(800)
+            InFlightGate.open?() -> Process.sleep(2_700)
+            true -> :ok
+          end
+        end
+
+        test "each gate returns a boolean" do
+          assert Enum.all?([SlowGate, FastGate, DrainGate, InFlightGate, PendingGate], fn gate ->
+                   is_boolean(gate.open?())
+                 end)
+        end
+      end
+      """)
+
+    acceptances =
+      Fixture.target(dir, "incomplete_acceptances", """
+      [
+        %{
+          file: "#{Path.expand(slow)}",
+          original: "false",
+          mutated: "true",
+          reason: "a timed-out mutant must not be accepted"
+        }
+      ]
+      """)
+
+    report =
+      Muta.run(
+        Config.new([slow, fast, drain, in_flight, pending], [tests],
+          workers: 2,
+          baseline_timeout_ms: 3_000,
+          test_helper: Fixture.helper(dir),
+          acceptances_file: acceptances,
+          mutators: [Muta.Mutator.Boolean]
+        )
+      )
+
+    assert report.complete? == false
+    assert report.score == nil
+    assert report.accepted == 0
+
+    assert Enum.map(report.mutants, & &1.file) |> Enum.sort() ==
+             Enum.sort([fast, drain, in_flight])
+
+    assert Enum.all?(report.mutants, &(&1.outcome == :survived))
+
+    assert [
+             %{
+               mutation: %Mutation{file: ^slow, original: "false", mutated: "true"},
+               reason: reason
+             }
+           ] =
+             report.failures
+
+    assert reason =~ "within 3000ms"
+    assert [%Mutation{file: ^pending}] = report.pending
+  end
+
+  test "reports the first failed mutant and leaves later mutants pending", %{dir: dir} do
+    slow = flag_source(dir, "first_slow_gate")
+    pending = flag_source(dir, "later_pending_gate")
+
+    tests =
+      Fixture.test_file(dir, "first_failure", ~S"""
+      defmodule FirstFailureTest do
+        use ExUnit.Case, async: false
+
+        setup_all do
+          if FirstSlowGate.open?(), do: Process.sleep(4_000)
+          :ok
+        end
+
+        test "both gates return a boolean" do
+          assert is_boolean(FirstSlowGate.open?())
+          assert is_boolean(LaterPendingGate.open?())
+        end
+      end
+      """)
+
+    report =
+      Muta.run(
+        Config.new([slow, pending], [tests],
+          workers: 1,
+          baseline_timeout_ms: 1_000,
+          test_helper: Fixture.helper(dir),
+          mutators: [Muta.Mutator.Boolean]
+        )
+      )
+
+    assert report.complete? == false
+    assert report.mutants == []
+    assert report.score == nil
+    assert [%{mutation: %Mutation{file: ^slow}, reason: reason}] = report.failures
+    assert reason =~ "within 1000ms"
+    assert [%Mutation{file: ^pending}] = report.pending
+  end
+
+  defp flag_source(dir, name) do
+    module = Macro.camelize(name)
+
+    Fixture.target(dir, name, """
+    defmodule #{module} do
+      def open?, do: false
+    end
+    """)
+  end
+
   test "raises when a target file does not exist" do
     assert_raise File.Error, fn -> Config.new(["does/not/exist.ex"], []) end
+  end
+
+  test "requires a positive baseline timeout", %{dir: dir} do
+    source = flag_source(dir, "timeout_validation")
+
+    assert_raise ArgumentError, ~r/positive baseline timeout/, fn ->
+      Config.new([source], [], baseline_timeout_ms: 0)
+    end
   end
 end

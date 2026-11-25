@@ -20,6 +20,7 @@ defmodule Mix.Tasks.Mutate do
         strict: [
           test: :keep,
           workers: :integer,
+          baseline_timeout_ms: :integer,
           acceptances_file: :string,
           since: :string,
           show_invalid: :boolean,
@@ -34,7 +35,11 @@ defmodule Mix.Tasks.Mutate do
     announce(format, sources, test_files)
 
     config =
-      Config.new(sources, test_files, Keyword.take(opts, [:workers, :acceptances_file, :since]))
+      Config.new(
+        sources,
+        test_files,
+        Keyword.take(opts, [:workers, :baseline_timeout_ms, :acceptances_file, :since])
+      )
 
     report = judge(config)
 
@@ -100,7 +105,7 @@ defmodule Mix.Tasks.Mutate do
     Mix.shell().info(Json.encode(report))
   end
 
-  defp render("human", %Report{mutants: []}, %Config{}, _show_invalid) do
+  defp render("human", %Report{complete?: true, mutants: []}, %Config{}, _show_invalid) do
     Mix.shell().info("No mutants generated. Nothing in these files can be mutated yet.")
   end
 
@@ -114,6 +119,7 @@ defmodule Mix.Tasks.Mutate do
     render_accepted(Report.accepted(report), config.acceptances)
     render_invalid(Report.invalid(report), show_invalid)
     render_notes(report)
+    render_incomplete(report)
     render_unexercised(Report.unexercised(report))
     render_skipped(report.skipped)
     render_type_guards(report.in_type_guards)
@@ -235,9 +241,44 @@ defmodule Mix.Tasks.Mutate do
   end
 
   defp tally(%Report{} = report) do
-    "#{length(report.mutants)} mutants · #{report.killed} killed · " <>
-      "#{report.survived} survived · #{report.accepted} accepted · " <>
-      "#{report.unstable} unstable · #{report.invalid} invalid · #{report.score}%"
+    tally =
+      "#{length(report.mutants)} mutants · #{report.killed} killed · " <>
+        "#{report.survived} survived · #{report.accepted} accepted · " <>
+        "#{report.unstable} unstable · #{report.invalid} invalid"
+
+    case report.score do
+      nil -> tally <> " · incomplete, score unavailable"
+      score -> tally <> " · #{score}%"
+    end
+  end
+
+  defp render_incomplete(%Report{complete?: true}), do: :ok
+
+  defp render_incomplete(%Report{} = report) do
+    Mix.shell().error(
+      "\nIncomplete: #{length(report.failures)} failed and #{length(report.pending)} pending mutant(s)."
+    )
+
+    Enum.each(report.failures, fn %{mutation: mutation, reason: reason} ->
+      mutator = mutation.mutator |> Module.split() |> List.last()
+
+      Mix.shell().error(
+        "  failed  #{mutation.file}:#{mutation.line} (AST #{mutation.at})  " <>
+          "#{mutator} in #{mutation.function}"
+      )
+
+      Mix.shell().error("    - #{mutation.original}")
+      Mix.shell().error("    + #{mutation.mutated}")
+      Mix.shell().error("    #{reason}")
+    end)
+
+    Enum.each(report.pending, fn mutation ->
+      mutator = mutation.mutator |> Module.split() |> List.last()
+
+      Mix.shell().error(
+        "  pending  #{mutation.file}:#{mutation.line} (AST #{mutation.at})  #{mutator}"
+      )
+    end)
   end
 
   defp render_notes(%Report{} = report) do
@@ -293,6 +334,7 @@ defmodule Mix.Tasks.Mutate do
     end
   end
 
+  defp exit_for(%Report{complete?: false}), do: exit({:shutdown, 2})
   defp exit_for(%Report{survived: 0, unstable: 0}), do: :ok
   defp exit_for(%Report{}), do: exit({:shutdown, 1})
 end

@@ -23,10 +23,18 @@ defmodule Muta.Report do
     :invalid,
     :skipped,
     :in_type_guards,
-    :score
+    :score,
+    complete?: true,
+    failures: [],
+    pending: []
   ]
 
+  @type failure :: %{mutation: Muta.Mutation.t(), reason: String.t()}
+
   @type t :: %__MODULE__{
+          complete?: boolean(),
+          failures: [failure()],
+          pending: [Muta.Mutation.t()],
           files: [Path.t()],
           mutants: [Mutant.t()],
           killed: non_neg_integer(),
@@ -36,7 +44,7 @@ defmodule Muta.Report do
           invalid: non_neg_integer(),
           skipped: non_neg_integer(),
           in_type_guards: non_neg_integer(),
-          score: float()
+          score: float() | nil
         }
 
   @spec from_mutants([Mutant.t()], [Path.t()], non_neg_integer(), non_neg_integer()) :: t()
@@ -45,6 +53,9 @@ defmodule Muta.Report do
     survived = count(mutants, :survived)
 
     %__MODULE__{
+      complete?: true,
+      failures: [],
+      pending: [],
       files: files,
       mutants: mutants,
       killed: killed,
@@ -80,12 +91,25 @@ defmodule Muta.Report do
   end
 
   @spec by_file(t()) :: [{Path.t(), t()}]
-  def by_file(%__MODULE__{files: files, mutants: mutants}) do
+  def by_file(%__MODULE__{files: files, mutants: mutants} = report) do
     of_file = Enum.group_by(mutants, & &1.file)
 
     files
     |> Enum.sort()
-    |> Enum.map(fn file -> {file, from_mutants(Map.get(of_file, file, []), [file])} end)
+    |> Enum.map(fn file ->
+      file_report = from_mutants(Map.get(of_file, file, []), [file])
+      failures = Enum.filter(report.failures, &match?(%Muta.Mutation{file: ^file}, &1.mutation))
+      pending = Enum.filter(report.pending, &(&1.file == file))
+
+      file_report =
+        if failures == [] and pending == [] do
+          file_report
+        else
+          %{file_report | complete?: false, failures: failures, pending: pending, score: nil}
+        end
+
+      {file, file_report}
+    end)
   end
 
   defp with_outcome(%__MODULE__{mutants: mutants}, outcome) do

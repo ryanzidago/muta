@@ -5,7 +5,8 @@ defmodule Muta.Fleet do
   alias Muta.UntrustworthyError
   alias Muta.Worker
 
-  @spec judge([Mutation.t()], Config.t()) :: [Mutant.t()]
+  @spec judge([Mutation.t()], Config.t()) ::
+          {[Mutant.t()], [Muta.Report.failure()], [Mutation.t()]}
   def judge(mutations, %Config{} = config) do
     ensure_distributed()
     peers = Enum.map(1..config.workers, &hire(&1, System.pid()))
@@ -20,12 +21,23 @@ defmodule Muta.Fleet do
   end
 
   defp share(workers, mutations) do
-    {:ok, queue} = Agent.start_link(fn -> mutations end)
+    {:ok, queue} =
+      Agent.start_link(fn -> %{pending: mutations, stopped?: false} end)
 
     try do
-      workers
-      |> alongside(&drain(queue, &1, []))
-      |> Enum.concat()
+      outcomes =
+        Task.async_stream(workers, &drain(queue, &1, []),
+          timeout: :infinity,
+          max_concurrency: length(workers),
+          ordered: false
+        )
+
+      judged_and_failures = Enum.map(outcomes, fn {:ok, result} -> result end)
+      judged = Enum.flat_map(judged_and_failures, &elem(&1, 0))
+      failures = Enum.flat_map(judged_and_failures, &elem(&1, 1))
+      pending = Agent.get(queue, & &1.pending)
+
+      {judged, failures, pending}
     after
       Agent.stop(queue)
     end
@@ -33,17 +45,45 @@ defmodule Muta.Fleet do
 
   defp drain(queue, worker, judged) do
     case take(queue) do
-      :none -> Enum.reverse(judged)
-      {:next, mutation} -> drain(queue, worker, [Worker.judge(worker, mutation) | judged])
+      :done ->
+        {Enum.reverse(judged), []}
+
+      :stopped ->
+        {Enum.reverse(judged), []}
+
+      {:next, mutation} ->
+        case attempt_mutation(worker, mutation) do
+          {:ok, mutant} ->
+            drain(queue, worker, [mutant | judged])
+
+          {:error, reason} ->
+            fail(queue, mutation, reason, judged)
+        end
     end
+  end
+
+  defp attempt_mutation(worker, mutation) do
+    {:ok, Worker.judge(worker, mutation)}
+  rescue
+    exception -> {:error, Exception.message(exception)}
+  catch
+    kind, reason -> {:error, Exception.format_banner(kind, reason)}
   end
 
   defp take(queue) do
     Agent.get_and_update(queue, fn
-      [] -> {:none, []}
-      [next | rest] -> {{:next, next}, rest}
+      %{stopped?: true} = state -> {:stopped, state}
+      %{pending: []} = state -> {:done, state}
+      %{pending: [next | rest]} = state -> {{:next, next}, %{state | pending: rest}}
     end)
   end
+
+  defp fail(queue, mutation, reason, judged) do
+    stop_dispatching(queue)
+    {Enum.reverse(judged), [%{mutation: mutation, reason: reason}]}
+  end
+
+  defp stop_dispatching(queue), do: Agent.update(queue, &%{&1 | stopped?: true})
 
   defp alongside(items, work) do
     items

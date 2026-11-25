@@ -2,6 +2,7 @@ defmodule Muta.Report.JsonTest do
   use ExUnit.Case, async: true
 
   alias Muta.Mutant
+  alias Muta.Mutation
   alias Muta.Report
   alias Muta.Report.Json
 
@@ -29,6 +30,7 @@ defmodule Muta.Report.JsonTest do
       )
 
     assert decode(report)["score"] == 50.0
+    assert decode(report)["complete"] == true
 
     assert decode(report)["totals"] == %{
              "mutants" => 2,
@@ -38,7 +40,8 @@ defmodule Muta.Report.JsonTest do
              "unstable" => 0,
              "invalid" => 0,
              "skipped" => 4,
-             "in_type_guards" => 7
+             "in_type_guards" => 7,
+             "unjudged" => 0
            }
   end
 
@@ -78,7 +81,66 @@ defmodule Muta.Report.JsonTest do
     decoded = decode(Report.from_mutants([], ["a.ex"]))
 
     assert decoded["score"] == 100.0
+    assert decoded["complete"] == true
     assert decoded["mutants"] == []
     assert decoded["unexercised"] == []
+  end
+
+  test "encodes incomplete reports without a score and keeps failed and pending identities" do
+    failed = mutation("slow.ex", 4, 2, "false", "true")
+    pending = mutation("later.ex", 9, 5, "false", "true")
+
+    report =
+      Report.from_mutants([mutant("done.ex", 2, :killed)], ["slow.ex", "done.ex", "later.ex"])
+      |> Map.merge(%{
+        complete?: false,
+        score: nil,
+        failures: [%{mutation: failed, reason: "attempt exceeded 500ms"}],
+        pending: [pending]
+      })
+
+    decoded = decode(report)
+
+    assert decoded["complete"] == false
+    assert decoded["score"] == nil
+    assert decoded["totals"]["unjudged"] == 2
+
+    assert decoded["failures"] == [
+             %{
+               "file" => "slow.ex",
+               "line" => 4,
+               "at" => 2,
+               "mutator" => "Boolean",
+               "function" => "open?/0",
+               "original" => "false",
+               "mutated" => "true",
+               "reason" => "attempt exceeded 500ms"
+             }
+           ]
+
+    assert decoded["pending"] == [
+             %{
+               "file" => "later.ex",
+               "line" => 9,
+               "at" => 5,
+               "mutator" => "Boolean",
+               "function" => "open?/0",
+               "original" => "false",
+               "mutated" => "true"
+             }
+           ]
+  end
+
+  defp mutation(file, line, at, original, mutated) do
+    %Mutation{
+      file: file,
+      line: line,
+      at: at,
+      mutator: Muta.Mutator.Boolean,
+      function: "open?/0",
+      original: original,
+      mutated: mutated,
+      replacement: true
+    }
   end
 end

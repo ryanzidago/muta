@@ -160,14 +160,26 @@ for a CI job or a script that wants the numbers rather than the prose:
 mix mutate lib/store/pricing.ex --test test/store/pricing_test.exs --format json
 ```
 
+`--baseline-timeout-ms` overrides the default per-attempt timeout, in
+milliseconds. It must be positive:
+
+```shell
+mix mutate lib/store/pricing.ex --test test/store/pricing_test.exs \
+  --baseline-timeout-ms 60000 --format json
+```
+
 ```json
 {
   "score": 87.5,
   "files": ["lib/store/pricing.ex"],
   "totals": {
     "mutants": 8, "killed": 7, "survived": 1, "accepted": 0,
-    "unstable": 0, "invalid": 0, "skipped": 0, "in_type_guards": 0
+    "unstable": 0, "invalid": 0, "skipped": 0, "in_type_guards": 0,
+    "unjudged": 0
   },
+  "complete": true,
+  "failures": [],
+  "pending": [],
   "mutants": [
     {
       "file": "lib/store/pricing.ex", "line": 5, "outcome": "survived",
@@ -180,7 +192,11 @@ mix mutate lib/store/pricing.ex --test test/store/pricing_test.exs --format json
 ```
 
 The exit code is the same as the human report: `0` clean, `1` something survived
-or came back unstable, `2` muta would not score the run.
+or came back unstable, `2` muta would not score the run. If a mutant's tests
+exceed the configured timeout, the JSON still includes every completed verdict;
+`complete` is `false`, `score` is `null`, and `failures` and `pending` identify
+the exact failed and unjudged mutation sites. This is a partial in-memory report
+for a handled mutant failure, not a checkpoint that survives a process crash.
 
 ## You pick the tests
 
@@ -292,7 +308,7 @@ a mutant or two between repeat runs at higher worker counts, usually between
 `survived` and `unstable`. Use `--workers 1` when you need the same number
 twice.
 
-## When muta stops instead of scoring
+## When muta cannot score a run
 
 A score you can't trust reads as reassurance, so muta raises
 `Muta.UntrustworthyError` rather than print one, when:
@@ -300,10 +316,14 @@ A score you can't trust reads as reassurance, so muta raises
 * a test fails on your unmutated code, so every mutant would look killed
 * two runs of your tests disagree, so kills mean nothing
 * a worker's tests are red though yours are green, so its VM is set up wrong
-* a process is still running a mutant after its test finished, so the next
-  mutant would be judged partly against this one
-* your tests don't finish in `:baseline_timeout_ms`, so there's no honest
-  deadline to hold a mutant to
+* your unmutated tests don't finish in `:baseline_timeout_ms`, so there's no
+  honest baseline for comparison
+
+If a mutant's test attempt exceeds that timeout, muta stops dispatching queued
+mutants, lets already-running attempts finish, and returns an incomplete report
+with their verdicts, the failed mutation, and all still-pending mutations.
+The run exits with status 2, and JSON callers can distinguish it using
+`report.complete? == false` and `report.score == nil`.
 
 ## Programmatic use
 
@@ -311,7 +331,8 @@ A score you can't trust reads as reassurance, so muta raises
 config = Muta.Config.new(["lib/store/pricing.ex"], ["test/store/pricing_test.exs"])
 report = Muta.run(config)
 
-report.score                    #=> 87.5
+report.complete?                #=> true
+report.score                    #=> 87.5 (nil when the report is incomplete)
 Muta.Report.survivors(report)   #=> [%Muta.Mutant{line: 5, original: "cents > 5000", ...}]
 ```
 

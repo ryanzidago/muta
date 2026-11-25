@@ -30,14 +30,28 @@ defmodule Muta do
         |> List.flatten()
         |> Enum.split_with(&on_a_named_line?(&1, config.lines))
 
-      judged
-      |> Fleet.judge(config)
-      |> then(&Acceptance.apply_to(config.acceptances, &1))
-      |> Report.from_mutants(
-        Enum.map(config.sources, & &1.file),
-        length(skipped),
-        Enum.sum(in_type_guards)
-      )
+      {judged, failures, pending} = Fleet.judge(judged, config)
+      judged = Acceptance.apply_to(config.acceptances, judged)
+
+      report =
+        judged
+        |> Report.from_mutants(
+          Enum.map(config.sources, & &1.file),
+          length(skipped),
+          Enum.sum(in_type_guards)
+        )
+
+      if failures == [] and pending == [] do
+        report
+      else
+        %{
+          report
+          | complete?: false,
+            failures: failures,
+            pending: pending,
+            score: nil
+        }
+      end
       |> ensure_something_was_scored()
     end)
   end
@@ -45,6 +59,8 @@ defmodule Muta do
   defp on_a_named_line?(%Mutation{} = mutation, lines) do
     MapSet.member?(Map.fetch!(lines, mutation.file), mutation.line)
   end
+
+  defp ensure_something_was_scored(%Report{complete?: false} = report), do: report
 
   defp ensure_something_was_scored(%Report{killed: 0, survived: 0} = report)
        when report.invalid > 0 or report.unstable > 0 do

@@ -2,6 +2,7 @@ defmodule Muta.ReportTest do
   use ExUnit.Case, async: true
 
   alias Muta.Mutant
+  alias Muta.Mutation
   alias Muta.Report
 
   defp mutant(file, line, outcome) do
@@ -142,5 +143,38 @@ defmodule Muta.ReportTest do
 
     assert [{"a.ex", _judged}, {"quiet.ex", quiet}] = Report.by_file(report)
     assert quiet.mutants == []
+  end
+
+  test "marks only files with failed or pending mutants incomplete in the breakdown" do
+    failed = %Mutation{
+      file: "failed.ex",
+      line: 4,
+      at: 2,
+      mutator: Muta.Mutator.Boolean,
+      function: "open?/0",
+      original: "false",
+      mutated: "true",
+      replacement: true
+    }
+
+    pending = %{failed | file: "pending.ex", line: 7, at: 5}
+
+    report =
+      Report.from_mutants([mutant("done.ex", 1, :killed)], ["done.ex", "failed.ex", "pending.ex"])
+      |> Map.merge(%{
+        complete?: false,
+        score: nil,
+        failures: [%{mutation: failed, reason: "timeout"}],
+        pending: [pending]
+      })
+
+    assert [{"done.ex", done}, {"failed.ex", failed_report}, {"pending.ex", pending_report}] =
+             Report.by_file(report)
+
+    assert done.complete?
+    refute failed_report.complete?
+    refute pending_report.complete?
+    assert failed_report.score == nil
+    assert pending_report.score == nil
   end
 end
